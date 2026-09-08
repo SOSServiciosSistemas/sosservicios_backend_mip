@@ -592,13 +592,12 @@ app.post('/api/reportes', async (req, res) => {
 // =================================================================================
 // RUTAS PARA LA BITÁCORA DIARIA DEL TÉCNICO
 // =================================================================================
-
 // Verifica si existe una jornada pendiente o activa para el técnico
 
 app.get('/api/bitacoras/hoy/:id', async (req, res) => {
     const idTecnico = req.params.id;
     try {
-        // REGLA MEJORADA: Solo busca rutas activas ("En_Ruta") o la ruta de HOY.
+        // Solo busca rutas activas ("En_Ruta") o la ruta de HOY.
         // Ignora rutas "Cerradas" de días anteriores para permitir arrancar un día nuevo.
         const query = `
             SELECT id_bitacora, estatus, km_inicial 
@@ -735,6 +734,7 @@ app.post('/api/bitacoras/entregar', async (req, res) => {
 // =================================================================================
 // Generar Resumen para el Planeador de Actividades
 // =================================================================================
+
 app.get('/api/bitacoras/resumen/:id_bitacora', async (req, res) => {
     const idBitacora = req.params.id_bitacora;
     try {
@@ -746,7 +746,7 @@ app.get('/api/bitacoras/resumen/:id_bitacora', async (req, res) => {
         `;
         const resBitacora = await pool.query(queryBitacora, [idBitacora]);
         
-        // ---> EL ESCUDO: Si no encuentra nada, avisa en lugar de chocar <---
+        // --->Si no encuentra nada, avisa<---
         if (resBitacora.rows.length === 0) {
             return res.status(404).json({ exito: false, error: 'La bitácora solicitada no existe' });
         }
@@ -819,6 +819,249 @@ app.get('/api/bitacoras/historial', async (req, res) => {
     } catch (error) {
         console.error('Error al obtener historial:', error);
         res.status(500).json({ exito: false, error: 'Error al consultar las bitácoras' });
+    }
+});
+
+// =================================================================================
+// RUTAS DE ADMINISTRADOR (Gestión y Soft Deletes)
+// =================================================================================
+
+// Obtiene los usuarios (excepto los Administradores) para el panel de Admin
+app.get('/api/admin/usuarios', async (req, res) => {
+    try {
+        // El filtro WHERE rol != 'Admin' es el escudo de seguridad
+        const query = `
+            SELECT id_usuario, nombre_completo, usuario, rol, activo 
+            FROM usuarios 
+            WHERE rol != 'Admin' 
+            ORDER BY nombre_completo ASC;
+        `;
+        const result = await pool.query(query);
+        res.json({ exito: true, usuarios: result.rows });
+    } catch (error) {
+        console.error('Error al obtener usuarios para admin:', error);
+        res.status(500).json({ exito: false, error: 'Error en la base de datos' });
+    }
+});
+
+// Obtiene TODOS los clientes para el panel de Admin
+app.get('/api/admin/clientes', async (req, res) => {
+    try {
+        const query = `SELECT id_cliente, nombre, clase, activo FROM clientes ORDER BY nombre ASC;`;
+        const result = await pool.query(query);
+        res.json({ exito: true, clientes: result.rows });
+    } catch (error) {
+        console.error('Error al obtener clientes para admin:', error);
+        res.status(500).json({ exito: false, error: 'Error en la base de datos' });
+    }
+});
+
+// Activa o desactiva un usuario (Soft Delete)
+app.put('/api/admin/usuarios/:id/estatus', async (req, res) => {
+    const idUsuario = req.params.id;
+    const { activo } = req.body; // Recibe true o false
+    
+    try {
+        const query = `UPDATE usuarios SET activo = $1 WHERE id_usuario = $2;`;
+        await pool.query(query, [activo, idUsuario]);
+        res.json({ exito: true, mensaje: 'Estatus del usuario actualizado correctamente' });
+    } catch (error) {
+        console.error('Error al cambiar estatus de usuario:', error);
+        res.status(500).json({ exito: false, error: 'Error al actualizar en la base de datos' });
+    }
+});
+
+// Activa o desactiva un cliente (Soft Delete)
+app.put('/api/admin/clientes/:id/estatus', async (req, res) => {
+    const idCliente = req.params.id;
+    const { activo } = req.body; 
+    
+    try {
+        const query = `UPDATE clientes SET activo = $1 WHERE id_cliente = $2;`;
+        await pool.query(query, [activo, idCliente]);
+        res.json({ exito: true, mensaje: 'Estatus del cliente actualizado correctamente' });
+    } catch (error) {
+        console.error('Error al cambiar estatus de cliente:', error);
+        res.status(500).json({ exito: false, error: 'Error al actualizar en la base de datos' });
+    }
+});
+
+// Activa o desactiva un producto (Soft Delete)
+app.put('/api/admin/productos/:id/estatus', async (req, res) => {
+    const idProducto = req.params.id;
+    const { activo } = req.body; 
+    
+    try {
+        const query = `UPDATE productos_insumos SET activo = $1 WHERE id_producto = $2;`;
+        await pool.query(query, [activo, idProducto]);
+        res.json({ exito: true, mensaje: 'Estatus del producto actualizado correctamente' });
+    } catch (error) {
+        console.error('Error al cambiar estatus de producto:', error);
+        res.status(500).json({ exito: false, error: 'Error al actualizar en la base de datos' });
+    }
+});
+
+// Obtiene TODOS los productos (activos e inactivos)
+app.get('/api/admin/productos', async (req, res) => {
+    try {
+        const query = `SELECT * FROM productos_insumos ORDER BY nombre_comercial ASC;`;
+        const result = await pool.query(query);
+        res.json({ exito: true, productos: result.rows });
+    } catch (error) {
+        console.error('Error al obtener productos:', error);
+        res.status(500).json({ exito: false, error: 'Error en la base de datos' });
+    }
+});
+
+// Registra un NUEVO producto en el catálogo
+app.post('/api/admin/productos', async (req, res) => {
+    // Extrae todos los datos que nos envía el frontend
+    const {
+        clave_producto,
+        nombre_comercial,
+        categoria,
+        unidad_medida,
+        capacidad_presentacion,
+        stock_minimo,
+        subcategoria,
+        ingrediente_activo,
+        registro_sanitario
+    } = req.body;
+
+    try {
+        // Prepara la consulta SQL para insertar los datos
+        // Nota: Los campos 'activo' y 'costo_promedio' se llenan solos por sus valores DEFAULT
+        const query = `
+            INSERT INTO productos_insumos (
+                clave_producto, 
+                nombre_comercial, 
+                categoria, 
+                unidad_medida, 
+                capacidad_presentacion, 
+                stock_minimo, 
+                subcategoria, 
+                ingrediente_activo, 
+                registro_sanitario
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+        `;
+
+        // Ordena los valores exactamente en el mismo orden que los $1, $2, etc.
+        const values = [
+            clave_producto,
+            nombre_comercial,
+            categoria,
+            unidad_medida,
+            capacidad_presentacion,
+            stock_minimo,
+            subcategoria, // Si era Herramienta, el frontend manda null y SQL lo respeta
+            ingrediente_activo,
+            registro_sanitario
+        ];
+
+        // Ejecuta la inserción
+        await pool.query(query, values);
+        
+        // Responde al frontend que todo salió bien
+        res.json({ exito: true, mensaje: 'Producto registrado correctamente' });
+
+    } catch (error) {
+        console.error('Error al insertar nuevo producto:', error);
+        res.status(500).json({ exito: false, error: 'Error al guardar en la base de datos' });
+    }
+});
+
+// =====================================================================
+// RUTAS DE INVENTARIO Y ALMACENES
+// =====================================================================
+
+// 1. Registrar una ENTRADA de mercancía (Compra)
+app.post('/api/inventario/entrada', async (req, res) => {
+    const { id_producto, cantidad_comprada, proveedor, costo_unitario, fecha_caducidad, id_usuario_registra } = req.body;
+    
+    // Abrimos una conexión exclusiva para hacer la transacción segura
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN'); // Inicia la transacción
+
+        // 1. Obtener la capacidad (ml/g) y el costo anterior del producto
+        const resProd = await client.query(`SELECT capacidad_presentacion, costo_promedio FROM productos_insumos WHERE id_producto = $1`, [id_producto]);
+        if (resProd.rows.length === 0) throw new Error('Producto no encontrado en el catálogo');
+        
+        const capacidad = parseFloat(resProd.rows[0].capacidad_presentacion) || 1;
+        const costoPromedioAnterior = parseFloat(resProd.rows[0].costo_promedio) || 0;
+
+        // 2. Cálculos Matemáticos Base
+        const cantidadRealAingresar = parseFloat(cantidad_comprada) * capacidad; // Ej. 5 envases * 1000ml = 5000ml
+        const costoTotalCompra = parseFloat(cantidad_comprada) * parseFloat(costo_unitario);
+
+        // 3. Buscar o crear el Almacén General de la Oficina
+        let resAlmacen = await client.query(`SELECT id_almacen FROM almacenes WHERE tipo_almacen = 'General' LIMIT 1`);
+        let idAlmacenGeneral;
+        if (resAlmacen.rows.length === 0) {
+            // Si nadie ha creado el almacén, lo creamos automáticamente
+            const nuevoAlmacen = await client.query(`INSERT INTO almacenes (nombre, tipo_almacen) VALUES ('Almacén Central Oficina', 'General') RETURNING id_almacen`);
+            idAlmacenGeneral = nuevoAlmacen.rows[0].id_almacen;
+        } else {
+            idAlmacenGeneral = resAlmacen.rows[0].id_almacen;
+        }
+
+        // 4. Verificar si ya existe este producto guardado en la Oficina
+        const resInv = await client.query(`SELECT cantidad_disponible FROM inventario_actual WHERE id_producto = $1 AND id_almacen = $2`, [id_producto, idAlmacenGeneral]);
+
+        let nuevoCostoPromedio = parseFloat(costo_unitario);
+
+        if (resInv.rows.length > 0) {
+            // EL PRODUCTO YA EXISTÍA: Calculamos Promedio y Sumamos ML
+            const stockAnteriorMl = parseFloat(resInv.rows[0].cantidad_disponible);
+            const stockAnteriorEnvases = stockAnteriorMl / capacidad; // Lo regresamos a envases para el cálculo financiero
+
+            // Fórmula: [(Stock Anterior * Costo Anterior) + Costo de esta Compra] / Total de Envases Nuevos
+            nuevoCostoPromedio = ((stockAnteriorEnvases * costoPromedioAnterior) + costoTotalCompra) / (stockAnteriorEnvases + parseFloat(cantidad_comprada));
+
+            // Actualizamos la tabla
+            await client.query(`
+                UPDATE inventario_actual
+                SET cantidad_disponible = cantidad_disponible + $1,
+                    fecha_caducidad = COALESCE($2, fecha_caducidad),
+                    ultima_actualizacion = CURRENT_TIMESTAMP
+                WHERE id_producto = $3 AND id_almacen = $4
+            `, [cantidadRealAingresar, fecha_caducidad || null, id_producto, idAlmacenGeneral]);
+
+        } else {
+            // ES LA PRIMERA VEZ QUE ENTRA ESTE PRODUCTO: Solo insertamos
+            await client.query(`
+                INSERT INTO inventario_actual (id_producto, id_almacen, cantidad_disponible, fecha_caducidad)
+                VALUES ($1, $2, $3, $4)
+            `, [id_producto, idAlmacenGeneral, cantidadRealAingresar, fecha_caducidad || null]);
+        }
+
+        // 5. Actualizar el Costo Promedio en el catálogo general
+        await client.query(`UPDATE productos_insumos SET costo_promedio = $1 WHERE id_producto = $2`, [nuevoCostoPromedio, id_producto]);
+
+        // 6. Registrar el "Ticket" de movimiento histórico
+        await client.query(`
+            INSERT INTO movimientos_inventario (
+                id_producto, id_almacen_destino, id_usuario_registra, tipo_movimiento,
+                cantidad, proveedor, costo_unitario, costo_total, caducidad_ingresada
+            ) VALUES ($1, $2, $3, 'Entrada por Compra', $4, $5, $6, $7, $8)
+        `, [
+            id_producto, idAlmacenGeneral, id_usuario_registra || null, 
+            cantidadRealAingresar, proveedor, costo_unitario, costoTotalCompra, fecha_caducidad || null
+        ]);
+
+        // Si todo salió perfecto, guardamos los cambios y cerramos transacción
+        await client.query('COMMIT');
+        res.json({ exito: true, mensaje: 'Entrada registrada y promedios calculados con éxito' });
+
+    } catch (error) {
+        // Si CUALQUIER paso falla, cancelamos TODO para no arruinar las matemáticas
+        await client.query('ROLLBACK');
+        console.error('Error crítico en transacción de inventario:', error);
+        res.status(500).json({ exito: false, error: 'Error al procesar el inventario' });
+    } finally {
+        // Liberamos la conexión
+        client.release();
     }
 });
 
