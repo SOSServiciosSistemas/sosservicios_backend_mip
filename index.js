@@ -1065,6 +1065,196 @@ app.post('/api/inventario/entrada', async (req, res) => {
     }
 });
 
+// 2. Obtener el inventario del Almacén General (Oficina)
+app.get('/api/inventario/general', async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                p.clave_producto,
+                p.nombre_comercial,
+                p.unidad_medida,
+                p.capacidad_presentacion,
+                i.cantidad_disponible,
+                p.costo_promedio,
+                i.fecha_caducidad
+            FROM inventario_actual i
+            JOIN productos_insumos p ON i.id_producto = p.id_producto
+            JOIN almacenes a ON i.id_almacen = a.id_almacen
+            WHERE a.tipo_almacen = 'General'
+            ORDER BY p.nombre_comercial ASC;
+        `;
+        const { rows } = await pool.query(query);
+        res.json({ exito: true, inventario: rows });
+    } catch (error) {
+        console.error("Error al obtener inventario general:", error);
+        res.status(500).json({ exito: false, error: 'Error al consultar la base de datos' });
+    }
+});
+
+// 3. Obtener el inventario de los Técnicos (Camionetas)
+app.get('/api/inventario/tecnicos', async (req, res) => {
+    try {
+        // Buscamos cualquier almacén que NO sea el General de la oficina
+        const query = `
+            SELECT 
+                a.nombre AS nombre_almacen,
+                p.clave_producto,
+                p.nombre_comercial,
+                p.unidad_medida,
+                p.capacidad_presentacion,
+                i.cantidad_disponible
+            FROM inventario_actual i
+            JOIN productos_insumos p ON i.id_producto = p.id_producto
+            JOIN almacenes a ON i.id_almacen = a.id_almacen
+            WHERE a.tipo_almacen != 'General'
+            ORDER BY a.nombre ASC, p.nombre_comercial ASC;
+        `;
+        const { rows } = await pool.query(query);
+        res.json({ exito: true, inventario: rows });
+    } catch (error) {
+        console.error("Error al obtener inventario de técnicos:", error);
+        res.status(500).json({ exito: false, error: 'Error al consultar la base de datos' });
+    }
+});
+
+// 4. Registrar un TRASPASO de mercancía (De Oficina a Camioneta)
+app.post('/api/inventario/traspaso', async (req, res) => {
+    const { clave_producto, id_tecnico, nombre_tecnico, cantidad_entregada_base, notas, id_usuario_registra } = req.body;
+    
+    const client = await pool.connect(); // Abrimos conexión exclusiva
+
+    try {
+        await client.query('BEGIN'); // Iniciar transacción segura
+
+        // 1. Obtener el ID interno del producto
+        const resProd = await client.query('SELECT id_producto FROM productos_insumos WHERE clave_producto = $1', [clave_producto]);
+        if (resProd.rows.length === 0) throw new Error('Producto no encontrado en el catálogo');
+        const id_producto = resProd.rows[0].id_producto;
+
+        // 2. Identificar el Almacén General (Origen)
+        const resAlmacenGen = await client.query(`SELECT id_almacen FROM almacenes WHERE tipo_almacen = 'General' LIMIT 1`);
+        if (resAlmacenGen.rows.length === 0) throw new Error('No existe un almacén general en la oficina');
+        const id_almacen_general = resAlmacenGen.rows[0].id_almacen;
+
+        // 3. Identificar o Crear el Almacén del Técnico (Destino)
+        let resAlmacenTec = await client.query(`SELECT id_almacen FROM almacenes WHERE id_tecnico = $1 AND tipo_almacen = 'Camioneta'`, [id_tecnico]);
+        let id_almacen_tecnico;
+        if (resAlmacenTec.rows.length === 0) {
+            // Si es su primer material, le creamos su "almacén/camioneta"
+            const nuevaCamioneta = await client.query(`
+                INSERT INTO almacenes (nombre, tipo_almacen, id_tecnico) 
+                VALUES ($1, 'Camioneta', $2) RETURNING id_almacen
+            `, [`Camioneta - ${nombre_tecnico}`, id_tecnico]);
+            id_almacen_tecnico = nuevaCamioneta.rows[0].id_almacen;
+        } else {
+            id_almacen_tecnico = resAlmacenTec.rows[0].id_almacen;
+        }
+
+        // 4. Verificar que la Oficina tenga suficiente stock y sacar la caducidad
+        const resStockOficina = await client.query(`
+            SELECT cantidad_disponible, fecha_caducidad 
+            FROM inventario_actual 
+            WHERE id_producto = $1 AND id_almacen = $2
+        `, [id_producto, id_almacen_general]);
+
+        if (resStockOficina.rows.length === 0 || parseFloat(resStockOficina.rows[0].cantidad_disponible) < parseFloat(cantidad_entregada_base)) {
+            throw new Error('Stock insuficiente en la oficina para realizar este traspaso.');
+        }
+        const fecha_caducidad = resStockOficina.rows[0].fecha_caducidad;
+
+        // 5. RESTAR el stock de la Oficina
+        await client.query(`
+            UPDATE inventario_actual 
+            SET cantidad_disponible = cantidad_disponible - $1, ultima_actualizacion = CURRENT_TIMESTAMP
+            WHERE id_producto = $2 AND id_almacen = $3
+        `, [cantidad_entregada_base, id_producto, id_almacen_general]);
+
+        // 6. SUMAR el stock a la Camioneta
+        const resStockTecnico = await client.query(`
+            SELECT cantidad_disponible FROM inventario_actual WHERE id_producto = $1 AND id_almacen = $2
+        `, [id_producto, id_almacen_tecnico]);
+
+        if (resStockTecnico.rows.length > 0) {
+            // Ya traía este producto, le sumamos lo nuevo
+            await client.query(`
+                UPDATE inventario_actual 
+                SET cantidad_disponible = cantidad_disponible + $1, fecha_caducidad = COALESCE($2, fecha_caducidad), ultima_actualizacion = CURRENT_TIMESTAMP
+                WHERE id_producto = $3 AND id_almacen = $4
+            `, [cantidad_entregada_base, fecha_caducidad, id_producto, id_almacen_tecnico]);
+        } else {
+            // Es la primera vez que trae este producto
+            await client.query(`
+                INSERT INTO inventario_actual (id_producto, id_almacen, cantidad_disponible, fecha_caducidad)
+                VALUES ($1, $2, $3, $4)
+            `, [id_producto, id_almacen_tecnico, cantidad_entregada_base, fecha_caducidad]);
+        }
+
+        // 7. Guardar el movimiento en el historial (Auditoría)
+        await client.query(`
+            INSERT INTO movimientos_inventario (
+                id_producto, id_almacen_origen, id_almacen_destino, id_usuario_registra, 
+                tipo_movimiento, cantidad, notas
+            ) VALUES ($1, $2, $3, $4, 'Traspaso a Técnico', $5, $6)
+        `, [id_producto, id_almacen_general, id_almacen_tecnico, id_usuario_registra || null, cantidad_entregada_base, notas]);
+
+        // Si superamos todos los pasos, guardamos definitivamente
+        await client.query('COMMIT');
+        res.json({ exito: true, mensaje: 'Traspaso completado con éxito' });
+
+    } catch (error) {
+        await client.query('ROLLBACK'); // Deshacemos todo si hubo error
+        console.error('Error en traspaso:', error);
+        res.status(500).json({ exito: false, error: error.message || 'Error al procesar el traspaso' });
+    } finally {
+        client.release();
+    }
+});
+
+// 5. Obtener el Historial de Movimientos (Auditoría para Administrador)
+app.get('/api/inventario/historial', async (req, res) => {
+    try {
+        // Leer parámetros de fecha desde la URL (si existen)
+        const { fechaInicio, fechaFin } = req.query;
+
+        let condicionFechas = "";
+        let parametros = [];
+
+        // Si el usuario seleccionó un rango, preparamos la consulta SQL
+        if (fechaInicio && fechaFin) {
+            condicionFechas = "WHERE m.fecha_movimiento >= $1 AND m.fecha_movimiento <= $2";
+            // Le agregamos la hora al texto para abarcar el día completo de principio a fin
+            parametros = [fechaInicio + " 00:00:00", fechaFin + " 23:59:59"];
+        }
+
+        const query = `
+            SELECT 
+                m.id_movimiento,
+                m.fecha_movimiento,
+                m.tipo_movimiento,
+                m.cantidad,
+                m.notas,
+                p.nombre_comercial,
+                p.unidad_medida,
+                COALESCE(ao.nombre, 'Proveedor Externo') AS origen,
+                COALESCE(ad.nombre, 'Baja / Consumo') AS destino,
+                COALESCE(u.nombre_completo, 'Sistema') AS usuario_registra
+            FROM movimientos_inventario m
+            JOIN productos_insumos p ON m.id_producto = p.id_producto
+            LEFT JOIN almacenes ao ON m.id_almacen_origen = ao.id_almacen
+            LEFT JOIN almacenes ad ON m.id_almacen_destino = ad.id_almacen
+            LEFT JOIN usuarios u ON m.id_usuario_registra = u.id_usuario
+            ${condicionFechas}
+            ORDER BY m.fecha_movimiento DESC
+            ${parametros.length === 0 ? "LIMIT 200" : ""} -- Límite de seguridad si no hay fechas
+        `;
+        const { rows } = await pool.query(query, parametros);
+        res.json({ exito: true, historial: rows });
+    } catch (error) {
+        console.error("Error al cargar historial:", error);
+        res.status(500).json({ exito: false, error: 'Error al consultar el historial' });
+    }
+});
+
 // =================================================================================
 // INICIALIZACIÓN DEL SERVIDOR
 // =================================================================================
