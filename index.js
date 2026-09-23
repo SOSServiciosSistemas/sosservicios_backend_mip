@@ -1311,6 +1311,8 @@ app.get('/api/ordenes/:id/reporte-final', async (req, res) => {
             SELECT 
                 o.id_orden, 
                 o.fecha_programada AS fecha_servicio, 
+                o.num_tratamiento, 
+                o.total_tratamientos,
                 r.hora_inicio AS hora_llegada, 
                 r.hora_fin AS hora_salida, 
                 u.nombre_completo AS nombre_tecnico,
@@ -1320,12 +1322,16 @@ app.get('/api/ordenes/:id/reporte-final', async (req, res) => {
                 c.telefono, 
                 c.giro AS giro_comercial, 
                 ub.domicilio AS direccion_completa,
-                ub.ciudad
+                ub.ciudad,
+                cp.costo_con_iva,
+                cp.costo_sin_iva,
+                cp.requiere_factura
             FROM ordenes_trabajo o
             JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion
             JOIN clientes c ON ub.id_cliente = c.id_cliente
             LEFT JOIN usuarios u ON o.id_tecnico = u.id_usuario
             LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden
+            LEFT JOIN control_pagos cp ON o.id_orden = cp.id_orden
             WHERE o.id_orden = $1
         `;
         const { rows } = await pool.query(queryOrden, [id]);
@@ -1345,24 +1351,39 @@ app.get('/api/ordenes/:id/reporte-final', async (req, res) => {
             ordenData.acciones_realizadas = detalles.acciones_correctivas || '';
             ordenData.recomendaciones_seguimiento = detalles.indicaciones_proximas || '';
             productosJSON = detalles.tabla_productos || [];
+            
+            // Enviamos el JSON íntegro al frontend para las áreas
+            ordenData.detalles_completos = detalles; 
         }
 
         let productosEnriquecidos = [];
         if (productosJSON.length > 0) {
             for (const prod of productosJSON) {
-                const resProd = await pool.query(`
-                    SELECT nombre_comercial, ingrediente_activo, registro_sanitario, unidad_medida 
-                    FROM productos_insumos WHERE clave_producto = $1
-                `, [prod.clave_producto]);
-                
-                if (resProd.rows.length > 0) {
-                    const dbProd = resProd.rows[0];
+                if (prod.clave_producto) {
+                    // Si trae clave, lo buscamos en la base de datos
+                    const resProd = await pool.query(`
+                        SELECT nombre_comercial, ingrediente_activo, registro_sanitario, unidad_medida 
+                        FROM productos_insumos WHERE clave_producto = $1
+                    `, [prod.clave_producto]);
+                    
+                    if (resProd.rows.length > 0) {
+                        const dbProd = resProd.rows[0];
+                        productosEnriquecidos.push({
+                            nombre_comercial: dbProd.nombre_comercial,
+                            ingrediente_activo: dbProd.ingrediente_activo || dbProd.nombre_comercial,
+                            registro_sanitario: dbProd.registro_sanitario || 'N/A',
+                            cantidad_usada: prod.dosis || prod.gasto_real,
+                            unidad_medida: dbProd.unidad_medida
+                        });
+                    }
+                } else {
+                    // Si NO trae clave, inyectamos directamente los datos capturados en el JSON
                     productosEnriquecidos.push({
-                        nombre_comercial: dbProd.nombre_comercial,
-                        ingrediente_activo: dbProd.ingrediente_activo || dbProd.nombre_comercial,
-                        registro_sanitario: dbProd.registro_sanitario || 'N/A',
-                        cantidad_usada: prod.dosis || prod.gasto_real,
-                        unidad_medida: dbProd.unidad_medida
+                        nombre_comercial: prod.nombre_comercial || '',
+                        ingrediente_activo: prod.ingrediente_activo || prod.nombre_comercial || '',
+                        registro_sanitario: prod.registro_sanitario || 'N/A',
+                        cantidad_usada: prod.dosis || prod.gasto_real || '',
+                        unidad_medida: prod.unidad_medida || ''
                     });
                 }
             }
