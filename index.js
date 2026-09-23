@@ -1313,6 +1313,7 @@ app.get('/api/ordenes/:id/reporte-final', async (req, res) => {
                 o.fecha_programada AS fecha_servicio, 
                 o.num_tratamiento, 
                 o.total_tratamientos,
+                o.ingresos_cobrados,
                 r.hora_inicio AS hora_llegada, 
                 r.hora_fin AS hora_salida, 
                 u.nombre_completo AS nombre_tecnico,
