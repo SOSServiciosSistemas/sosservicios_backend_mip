@@ -1,25 +1,23 @@
 require('dotenv').config();
 const express = require('express');
-const { Pool } = require('pg');
 const cors = require('cors');
 const fs = require('fs');      
 const path = require('path');  
 
 const app = express();
 
+// Importar la conexión a BD centralizada
+const pool = require('./database');
+// Importar nuestros archivos de rutas modulares
+const reportesRoutes = require('./routes/reportes');
+
 // Configura los middlewares de la aplicación
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Configura la conexión a la base de datos PostgreSQL
-const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
-});
+// Enlazar las rutas. Todo lo que llegue a /api/reportes se manda a reportesRoutes
+app.use('/api/reportes', reportesRoutes);
 
 // =================================================================================
 // RUTAS DE SISTEMA Y AUTENTICACIÓN
