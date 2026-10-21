@@ -10,4 +10,8 @@ const pool = new Pool({
     port: process.env.DB_PORT,
 });
 
+// Asegurar columna de firma digital en tabla usuarios
+pool.query('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS firma_digital TEXT;')
+    .catch(err => console.warn('Aviso al verificar columna firma_digital:', err.message));
+
 module.exports = pool;

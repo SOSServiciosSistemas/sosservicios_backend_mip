@@ -15,7 +15,7 @@ router.get('/reportes-mip/:id_orden', async (req, res) => {
 router.get('/ordenes/:id/reporte-final', async (req, res) => {
     try {
         const { rows } = await pool.query(`
-            SELECT o.id_orden, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.ingresos_cobrados, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
+            SELECT o.id_orden, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.ingresos_cobrados, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
             FROM ordenes_trabajo o JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion JOIN clientes c ON ub.id_cliente = c.id_cliente LEFT JOIN usuarios u ON o.id_tecnico = u.id_usuario LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden LEFT JOIN control_pagos cp ON o.id_orden = cp.id_orden WHERE o.id_orden = $1
         `, [req.params.id]);
         

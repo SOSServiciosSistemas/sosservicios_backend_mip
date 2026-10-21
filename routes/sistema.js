@@ -41,4 +41,15 @@ router.get('/tecnicos', async (req, res) => {
     }
 });
 
+// Mesa de Control (para liquidación y firmas)
+router.get('/mesa-control/usuarios', async (req, res) => {
+    try {
+        const query = `SELECT id_usuario, nombre_completo FROM usuarios WHERE rol = 'Mesa_Control' AND activo = true ORDER BY nombre_completo ASC;`;
+        const result = await pool.query(query);
+        res.json({ exito: true, usuarios: result.rows });
+    } catch (error) {
+        res.status(500).json({ exito: false, error: 'Error al obtener personal de mesa de control' });
+    }
+});
+
 module.exports = router;

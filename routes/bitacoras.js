@@ -33,24 +33,92 @@ router.post('/bitacoras/actividad', async (req, res) => {
 });
 
 router.post('/bitacoras/cerrar-ruta', async (req, res) => {
-    const { id_bitacora, km_final, firma_tecnico } = req.body;
+    const { id_bitacora, km_final, id_usuario, password, firma_tecnico } = req.body;
     try {
-        const resCheck = await pool.query('SELECT estatus FROM bitacoras_diarias WHERE id_bitacora = $1', [id_bitacora]);
-        if (resCheck.rows.length === 0 || resCheck.rows[0].estatus !== 'En_Ruta') return res.status(400).json({ exito: false, error: 'Ruta ya cerrada.' });
-        await pool.query(`UPDATE bitacoras_diarias SET estatus = 'Cerrada_Ruta', km_final = $1, firmas_cierre = $2 WHERE id_bitacora = $3`, [km_final, JSON.stringify({ tecnico: firma_tecnico }), id_bitacora]);
-        res.json({ exito: true });
-    } catch (error) { res.status(500).json({ exito: false }); }
+        const resCheck = await pool.query('SELECT id_tecnico, estatus FROM bitacoras_diarias WHERE id_bitacora = $1', [id_bitacora]);
+        if (resCheck.rows.length === 0) return res.status(404).json({ exito: false, error: 'Bitácora no encontrada.' });
+        if (resCheck.rows[0].estatus !== 'En_Ruta') return res.status(400).json({ exito: false, error: 'La ruta ya se encuentra cerrada.' });
+
+        let firmaAEstampar = firma_tecnico;
+
+        // Si se envió validación por contraseña (nuevo flujo oficial con firma electrónica)
+        if (password) {
+            const idTecnico = id_usuario || resCheck.rows[0].id_tecnico;
+            const resUser = await pool.query('SELECT id_usuario, password_hash, firma_digital FROM usuarios WHERE id_usuario = $1 AND activo = true', [idTecnico]);
+            if (resUser.rows.length === 0) {
+                return res.status(404).json({ exito: false, error: 'Técnico no encontrado o inactivo.' });
+            }
+            if (resUser.rows[0].password_hash !== password) {
+                return res.status(401).json({ exito: false, error: 'Contraseña incorrecta. No se pudo verificar la firma del técnico.' });
+            }
+            if (!resUser.rows[0].firma_digital) {
+                return res.status(400).json({ exito: false, error: 'El técnico no tiene una firma oficial registrada. Solicite al administrador registrar su firma en el panel.' });
+            }
+            firmaAEstampar = resUser.rows[0].firma_digital;
+        }
+
+        if (!firmaAEstampar) {
+            return res.status(400).json({ exito: false, error: 'Se requiere firma para cerrar la ruta.' });
+        }
+
+        await pool.query(
+            `UPDATE bitacoras_diarias SET estatus = 'Cerrada_Ruta', km_final = $1, firmas_cierre = $2::jsonb WHERE id_bitacora = $3`,
+            [km_final, JSON.stringify({ tecnico: firmaAEstampar }), id_bitacora]
+        );
+        res.json({ exito: true, mensaje: 'Ruta cerrada y firmada exitosamente.' });
+    } catch (error) {
+        console.error("Error al cerrar ruta:", error);
+        res.status(500).json({ exito: false, error: error.message });
+    }
 });
 
 router.post('/bitacoras/entregar', async (req, res) => {
-    const { id_bitacora, firma_responsable, total_entregado } = req.body;
+    const { id_bitacora, id_usuario_responsable, password, total_entregado, firma_responsable } = req.body;
     try {
         const resBitacora = await pool.query('SELECT firmas_cierre FROM bitacoras_diarias WHERE id_bitacora = $1', [id_bitacora]);
+        if (resBitacora.rows.length === 0) return res.status(404).json({ exito: false, error: 'Bitácora no encontrada.' });
+
         let firmas = resBitacora.rows[0].firmas_cierre || {};
-        firmas.responsable = firma_responsable;
-        await pool.query(`UPDATE bitacoras_diarias SET estatus = 'Entregada', firmas_cierre = $1::jsonb, total_efectivo_entregado = $2 WHERE id_bitacora = $3`, [JSON.stringify(firmas), total_entregado, id_bitacora]);
-        res.json({ exito: true });
-    } catch (error) { res.status(500).json({ exito: false }); }
+        let firmaAEstampar = firma_responsable;
+
+        // Si se envió validación por contraseña (nuevo flujo oficial)
+        if (password) {
+            if (!id_usuario_responsable) {
+                return res.status(400).json({ exito: false, error: 'Debe seleccionar el usuario responsable de Mesa de Control.' });
+            }
+            const resUser = await pool.query(
+                `SELECT id_usuario, nombre_completo, rol, password_hash, firma_digital FROM usuarios WHERE id_usuario = $1 AND activo = true`,
+                [id_usuario_responsable]
+            );
+            if (resUser.rows.length === 0) {
+                return res.status(404).json({ exito: false, error: 'Usuario responsable no encontrado o inactivo.' });
+            }
+            if (resUser.rows[0].rol !== 'Mesa_Control' && resUser.rows[0].rol !== 'Admin') {
+                return res.status(403).json({ exito: false, error: 'El usuario seleccionado no pertenece a Mesa de Control.' });
+            }
+            if (resUser.rows[0].password_hash !== password) {
+                return res.status(401).json({ exito: false, error: 'Contraseña de Mesa de Control incorrecta.' });
+            }
+            if (!resUser.rows[0].firma_digital) {
+                return res.status(400).json({ exito: false, error: 'El usuario de Mesa de Control no tiene una firma oficial registrada.' });
+            }
+            firmaAEstampar = resUser.rows[0].firma_digital;
+        }
+
+        if (!firmaAEstampar) {
+            return res.status(400).json({ exito: false, error: 'Se requiere firma de Mesa de Control para liquidar.' });
+        }
+
+        firmas.responsable = firmaAEstampar;
+        await pool.query(
+            `UPDATE bitacoras_diarias SET estatus = 'Entregada', firmas_cierre = $1::jsonb, total_efectivo_entregado = $2 WHERE id_bitacora = $3`,
+            [JSON.stringify(firmas), total_entregado, id_bitacora]
+        );
+        res.json({ exito: true, mensaje: 'Liquidación completada y firmada exitosamente.' });
+    } catch (error) {
+        console.error("Error al entregar/liquidar bitácora:", error);
+        res.status(500).json({ exito: false, error: error.message });
+    }
 });
 
 router.get('/bitacoras/resumen/:id_bitacora', async (req, res) => {
