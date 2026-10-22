@@ -52,11 +52,70 @@ router.get('/orden/:id', async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT o.*, c.id_cliente, c.nombre AS nombre_cliente, c.telefono, u.nombre_ubicacion, u.domicilio, u.colonia, u.ciudad
-            FROM ordenes_trabajo o LEFT JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion LEFT JOIN clientes c ON u.id_cliente = c.id_cliente WHERE o.id_orden = $1
+            FROM ordenes_trabajo o 
+            LEFT JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion 
+            LEFT JOIN clientes c ON u.id_cliente = c.id_cliente 
+            WHERE o.id_orden = $1
         `, [req.params.id]);
-        if (result.rows.length > 0) res.json({ exito: true, orden: result.rows[0] });
-        else res.status(404).json({ exito: false, error: 'Orden no encontrada' });
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ exito: false, error: 'Orden no encontrada' });
+        }
+
+        const orden = result.rows[0];
+        const numTrat = parseInt(orden.num_tratamiento) || 1;
+        const totalTrat = parseInt(orden.total_tratamientos) || 1;
+        const esMultiTratamiento = Boolean(totalTrat > 1 && orden.id_grupo);
+
+        let costoTotalTratamiento = parseFloat(orden.costo_total_tratamiento || orden.costo || orden.ingresos_cobrados || 0);
+        let totalCobradoPrevio = 0;
+        let saldoPendiente = costoTotalTratamiento;
+
+        if (esMultiTratamiento) {
+            // Consultar todas las órdenes del mismo grupo para calcular historial de cobro
+            const resGrupo = await pool.query(`
+                SELECT id_orden, num_tratamiento, total_tratamientos, estatus, ingresos_cobrados, costo, costo_total_tratamiento
+                FROM ordenes_trabajo
+                WHERE id_grupo = $1
+                ORDER BY num_tratamiento ASC
+            `, [orden.id_grupo]);
+
+            const ordenesGrupo = resGrupo.rows;
+
+            // Determinar el costo total pactado del tratamiento (preferir el de la visita 1)
+            const orden1 = ordenesGrupo.find(o => parseInt(o.num_tratamiento) === 1);
+            if (orden1 && parseFloat(orden1.costo_total_tratamiento || orden1.costo || orden1.ingresos_cobrados) > 0) {
+                costoTotalTratamiento = parseFloat(orden1.costo_total_tratamiento || orden1.costo || orden1.ingresos_cobrados);
+            } else {
+                const maxCosto = Math.max(...ordenesGrupo.map(o => parseFloat(o.costo_total_tratamiento || o.costo || o.ingresos_cobrados || 0)));
+                if (maxCosto > 0) costoTotalTratamiento = maxCosto;
+            }
+
+            // Sumar lo efectivamente cobrado en visitas anteriores completadas
+            const previasCompletadas = ordenesGrupo.filter(o => 
+                o.estatus === 'Completado' && parseInt(o.num_tratamiento) < numTrat
+            );
+            totalCobradoPrevio = previasCompletadas.reduce((sum, o) => sum + (parseFloat(o.ingresos_cobrados) || 0), 0);
+
+            // Saldo pendiente para esta visita
+            saldoPendiente = Math.max(0, costoTotalTratamiento - totalCobradoPrevio);
+        }
+
+        orden.es_multitratamiento = esMultiTratamiento;
+        orden.costo_total_tratamiento = costoTotalTratamiento;
+        orden.total_cobrado_previo = totalCobradoPrevio;
+        orden.saldo_pendiente = saldoPendiente;
+
+        // Sugerir monto a cobrar: Si no está completado y es multi-tratamiento, el saldo pendiente; de lo contrario el registrado
+        if (esMultiTratamiento && orden.estatus !== 'Completado') {
+            orden.monto_sugerido_cobro = saldoPendiente;
+        } else {
+            orden.monto_sugerido_cobro = parseFloat(orden.ingresos_cobrados) || saldoPendiente;
+        }
+
+        res.json({ exito: true, orden });
     } catch (error) {
+        console.error('Error al consultar orden:', error);
         res.status(500).json({ exito: false, error: 'Error BD' });
     }
 });
@@ -71,14 +130,18 @@ router.post('/ordenes', async (req, res) => {
         const idGrupo = (total > 1) ? Date.now().toString() : null; 
         let fechaActual = new Date(fecha_programada), primerId = null;
         const iteraciones = (total > 1 && tipo_servicio === 'Aplicación') ? (total - inicioTratamiento + 1) : 1;
+        const costoTotalTratamiento = parseFloat(costo) || 0;
 
         for (let i = 0; i < iteraciones; i++) {
             const tr = inicioTratamiento + i;
             const plagas = (tr === 1) ? plagas_a_tratar : '[]';
+            // Solo el primer servicio lleva el costo total inicialmente; los siguientes inician en 0
+            const costoVisita = (total > 1) ? ((tr === 1) ? costoTotalTratamiento : 0) : costoTotalTratamiento;
+
             const result = await client.query(`
-                INSERT INTO ordenes_trabajo (id_ubicacion, id_tecnico, fecha_programada, tipo_servicio, observaciones_mesa, estatus, ingresos_cobrados, num_tratamiento, total_tratamientos, plagas_a_tratar, id_grupo)
-                VALUES ($1, $2, $3, $4, $5, 'Pendiente', $6, $7, $8, $9, $10) RETURNING id_orden;
-            `, [id_ubicacion, id_tecnico, fechaActual, tipo_servicio, observaciones_mesa, costo, tr, total, plagas, idGrupo]);
+                INSERT INTO ordenes_trabajo (id_ubicacion, id_tecnico, fecha_programada, tipo_servicio, observaciones_mesa, estatus, ingresos_cobrados, costo, costo_total_tratamiento, num_tratamiento, total_tratamientos, plagas_a_tratar, id_grupo)
+                VALUES ($1, $2, $3, $4, $5, 'Pendiente', $6, $7, $8, $9, $10, $11, $12) RETURNING id_orden;
+            `, [id_ubicacion, id_tecnico, fechaActual, tipo_servicio, observaciones_mesa, costoVisita, costoVisita, costoTotalTratamiento, tr, total, plagas, idGrupo]);
             
             if (i === 0) primerId = result.rows[0].id_orden;
             if (frecuencia === 'Semanal') fechaActual.setDate(fechaActual.getDate() + 7);
@@ -90,6 +153,7 @@ router.post('/ordenes', async (req, res) => {
         res.json({ exito: true, id_orden: primerId });
     } catch (error) {
         await client.query('ROLLBACK');
+        console.error('Error al crear ordenes:', error);
         res.status(500).json({ exito: false, error: 'Error BD' });
     } finally { client.release(); }
 });
@@ -97,10 +161,18 @@ router.post('/ordenes', async (req, res) => {
 router.put('/ordenes/:id', async (req, res) => {
     const { id_ubicacion, fecha_programada, id_tecnico, tipo_servicio, costo, observaciones_mesa } = req.body;
     try {
-        const resOrden = await pool.query('SELECT id_grupo, num_tratamiento FROM ordenes_trabajo WHERE id_orden = $1', [req.params.id]);
+        const resOrden = await pool.query('SELECT id_grupo, num_tratamiento, total_tratamientos FROM ordenes_trabajo WHERE id_orden = $1', [req.params.id]);
+        const ordenActual = resOrden.rows[0];
+
         await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, fecha_programada=$2, id_tecnico=$3, tipo_servicio=$4, costo=$5, observaciones_mesa=$6 WHERE id_orden=$7`, [id_ubicacion, fecha_programada, id_tecnico, tipo_servicio, costo, observaciones_mesa, req.params.id]);
-        if (resOrden.rows[0] && resOrden.rows[0].id_grupo) {
-            await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, tipo_servicio=$2, costo=$3 WHERE id_grupo=$4 AND num_tratamiento>$5 AND estatus='Pendiente'`, [id_ubicacion, tipo_servicio, costo, resOrden.rows[0].id_grupo, resOrden.rows[0].num_tratamiento]);
+
+        if (ordenActual && ordenActual.id_grupo) {
+            // Si se edita la visita 1 de un grupo, actualizar costo_total_tratamiento en todo el grupo
+            if (parseInt(ordenActual.num_tratamiento) === 1 && costo !== undefined) {
+                await pool.query(`UPDATE ordenes_trabajo SET costo_total_tratamiento=$1 WHERE id_grupo=$2`, [costo, ordenActual.id_grupo]);
+            }
+            // Actualizar ubicación y tipo_servicio en visitas pendientes consecutivas sin sobreescribir sus costos de visita a 0
+            await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, tipo_servicio=$2 WHERE id_grupo=$3 AND num_tratamiento>$4 AND estatus='Pendiente'`, [id_ubicacion, tipo_servicio, ordenActual.id_grupo, ordenActual.num_tratamiento]);
         }
         res.json({ exito: true });
     } catch (error) { res.status(500).json({ exito: false }); }

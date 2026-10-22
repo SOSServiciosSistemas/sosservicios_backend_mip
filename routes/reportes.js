@@ -15,7 +15,7 @@ router.get('/reportes-mip/:id_orden', async (req, res) => {
 router.get('/ordenes/:id/reporte-final', async (req, res) => {
     try {
         const { rows } = await pool.query(`
-            SELECT o.id_orden, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.ingresos_cobrados, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
+            SELECT o.id_orden, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.id_grupo, o.costo_total_tratamiento, o.ingresos_cobrados, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
             FROM ordenes_trabajo o JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion JOIN clientes c ON ub.id_cliente = c.id_cliente LEFT JOIN usuarios u ON o.id_tecnico = u.id_usuario LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden LEFT JOIN control_pagos cp ON o.id_orden = cp.id_orden WHERE o.id_orden = $1
         `, [req.params.id]);
         
@@ -60,18 +60,109 @@ router.get('/ordenes/:id/reporte-final', async (req, res) => {
     } catch (error) { res.status(500).json({ exito: false, error: 'Error del servidor' }); }
 });
 
-// 3. Registra el Reporte MIP, marca completada y descuenta inventario
+// 3. Registra el Reporte MIP, marca completada, registra cobranza y descuenta inventario
 router.post('/reportes', async (req, res) => {
-    const { id_orden, letra, hora_inicio, hora_fin, detalles, id_tecnico } = req.body;
+    const { id_orden, letra, hora_inicio, hora_fin, detalles, id_tecnico, monto_cobrado } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
         const horaInicioSegura = hora_inicio ? hora_inicio : new Date().toISOString();
         const horaFinSegura = hora_fin ? hora_fin : new Date().toISOString();
 
+        // 1. Guardar reporte MIP
         await client.query(`INSERT INTO reportes_mip (id_orden, letra_formato, hora_inicio, hora_fin, detalles_ejecucion, fecha_reporte) VALUES ($1, $2, $3, $4, $5, timezone('America/Mexico_City', now()))`, [id_orden, letra, horaInicioSegura, horaFinSegura, JSON.stringify(detalles)]);
-        await client.query(`UPDATE ordenes_trabajo SET estatus = 'Completado' WHERE id_orden = $1`, [id_orden]);
 
+        // 2. Obtener datos de la orden actual
+        const resOrden = await client.query(`
+            SELECT id_orden, id_grupo, num_tratamiento, total_tratamientos, ingresos_cobrados, costo, costo_total_tratamiento
+            FROM ordenes_trabajo WHERE id_orden = $1 FOR UPDATE
+        `, [id_orden]);
+
+        if (resOrden.rows.length === 0) {
+            throw new Error('Orden no encontrada');
+        }
+
+        const ordenActual = resOrden.rows[0];
+        const numTratamiento = parseInt(ordenActual.num_tratamiento) || 1;
+        const totalTratamientos = parseInt(ordenActual.total_tratamientos) || 1;
+        const esMultiTratamiento = Boolean(ordenActual.id_grupo && totalTratamientos > 1);
+
+        // Si se envió monto_cobrado, usarlo; si no, conservar lo que tenía
+        const montoRealCobrado = (monto_cobrado !== undefined && monto_cobrado !== null && monto_cobrado !== '')
+            ? Math.max(0, parseFloat(monto_cobrado) || 0)
+            : (parseFloat(ordenActual.ingresos_cobrados) || 0);
+
+        // 3. Marcar completada la orden y registrar el monto cobrado real en esta visita
+        await client.query(`
+            UPDATE ordenes_trabajo 
+            SET estatus = 'Completado', ingresos_cobrados = $1 
+            WHERE id_orden = $2
+        `, [montoRealCobrado, id_orden]);
+
+        // 4. Lógica de balance y cobranza para tratamientos multi-visita
+        if (esMultiTratamiento) {
+            const idGrupo = ordenActual.id_grupo;
+
+            // Determinar costo total pactado del tratamiento
+            let costoTotalTratamiento = parseFloat(ordenActual.costo_total_tratamiento);
+            if (!costoTotalTratamiento || isNaN(costoTotalTratamiento) || costoTotalTratamiento <= 0) {
+                const resOrden1 = await client.query(`
+                    SELECT costo_total_tratamiento, costo, ingresos_cobrados 
+                    FROM ordenes_trabajo 
+                    WHERE id_grupo = $1 AND num_tratamiento = 1
+                `, [idGrupo]);
+                if (resOrden1.rows.length > 0) {
+                    costoTotalTratamiento = parseFloat(resOrden1.rows[0].costo_total_tratamiento || resOrden1.rows[0].costo || resOrden1.rows[0].ingresos_cobrados || 0);
+                } else {
+                    costoTotalTratamiento = parseFloat(ordenActual.costo || ordenActual.ingresos_cobrados || 0);
+                }
+            }
+
+            // Calcular total cobrado hasta ahora en todas las visitas completadas de este grupo
+            const resTotalCobrado = await client.query(`
+                SELECT COALESCE(SUM(ingresos_cobrados), 0) AS total_cobrado
+                FROM ordenes_trabajo
+                WHERE id_grupo = $1 AND estatus = 'Completado'
+            `, [idGrupo]);
+
+            const totalCobrado = parseFloat(resTotalCobrado.rows[0].total_cobrado) || 0;
+            const nuevoSaldoPendiente = Math.max(0, costoTotalTratamiento - totalCobrado);
+
+            // Buscar la siguiente visita pendiente en el grupo (num_tratamiento > numTratamiento)
+            const resSiguiente = await client.query(`
+                SELECT id_orden, num_tratamiento
+                FROM ordenes_trabajo
+                WHERE id_grupo = $1 AND estatus = 'Pendiente' AND num_tratamiento > $2
+                ORDER BY num_tratamiento ASC
+                LIMIT 1
+            `, [idGrupo, numTratamiento]);
+
+            if (resSiguiente.rows.length > 0) {
+                const siguienteOrden = resSiguiente.rows[0];
+                // A la siguiente orden pendiente se le asigna el saldo pendiente restante
+                await client.query(`
+                    UPDATE ordenes_trabajo
+                    SET ingresos_cobrados = $1
+                    WHERE id_orden = $2
+                `, [nuevoSaldoPendiente, siguienteOrden.id_orden]);
+
+                // A las demás visitas pendientes consecutivas se les asigna 0
+                await client.query(`
+                    UPDATE ordenes_trabajo
+                    SET ingresos_cobrados = 0
+                    WHERE id_grupo = $1 AND estatus = 'Pendiente' AND num_tratamiento > $2
+                `, [idGrupo, siguienteOrden.num_tratamiento]);
+            } else {
+                // Si ya no hay siguiente visita pendiente o no hay más órdenes pendientes
+                await client.query(`
+                    UPDATE ordenes_trabajo
+                    SET ingresos_cobrados = 0
+                    WHERE id_grupo = $1 AND estatus = 'Pendiente'
+                `, [idGrupo]);
+            }
+        }
+
+        // 5. Descuento de inventario
         if (id_tecnico && detalles.tabla_productos && detalles.tabla_productos.length > 0) {
             const resAlmacen = await client.query(`SELECT id_almacen FROM almacenes WHERE id_tecnico = $1 AND tipo_almacen != 'General' LIMIT 1`, [id_tecnico]);
             if (resAlmacen.rows.length > 0) {
@@ -91,8 +182,13 @@ router.post('/reportes', async (req, res) => {
         }
         await client.query('COMMIT');
         res.json({ exito: true, mensaje: 'Reporte guardado con éxito' });
-    } catch (error) { await client.query('ROLLBACK'); res.status(500).json({ exito: false, error: 'Error BD' }); } 
-    finally { client.release(); }
+    } catch (error) { 
+        await client.query('ROLLBACK'); 
+        console.error('Error al guardar reporte:', error);
+        res.status(500).json({ exito: false, error: 'Error BD: ' + error.message }); 
+    } finally { 
+        client.release(); 
+    }
 });
 
 // 4. RUTA PARA RECIBIR Y GUARDAR EL PDF EN WINDOWS
