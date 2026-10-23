@@ -197,9 +197,76 @@ router.get('/bitacoras/resumen/:id_bitacora', async (req, res) => {
 
 router.get('/bitacoras/historial', async (req, res) => {
     try {
-        const result = await pool.query(`SELECT b.id_bitacora, b.fecha_jornada, u.nombre_completo AS tecnico, b.estatus, b.total_efectivo_entregado, b.km_inicial, b.km_final FROM bitacoras_diarias b JOIN usuarios u ON b.id_tecnico = u.id_usuario ORDER BY b.fecha_jornada DESC, b.id_bitacora DESC;`);
+        const result = await pool.query(`
+            SELECT b.id_bitacora, b.fecha_jornada, u.nombre_completo AS tecnico, b.estatus, 
+                   b.total_efectivo_entregado, b.km_inicial, b.km_final,
+                   (b.fecha_jornada = timezone('America/Mexico_City', now())::date) AS es_hoy
+            FROM bitacoras_diarias b 
+            JOIN usuarios u ON b.id_tecnico = u.id_usuario 
+            ORDER BY b.fecha_jornada DESC, b.id_bitacora DESC;
+        `);
         res.json({ exito: true, bitacoras: result.rows });
     } catch (error) { res.status(500).json({ exito: false }); }
+});
+
+router.post('/bitacoras/:id/reabrir', async (req, res) => {
+    const idBitacora = req.params.id;
+    try {
+        const resCheck = await pool.query(
+            `SELECT id_bitacora, fecha_jornada, estatus, id_tecnico 
+             FROM bitacoras_diarias 
+             WHERE id_bitacora = $1`,
+            [idBitacora]
+        );
+        if (resCheck.rows.length === 0) {
+            return res.status(404).json({ exito: false, error: 'Bitácora no encontrada.' });
+        }
+
+        const bitacora = resCheck.rows[0];
+
+        // Condición 1: Solo se pueden reabrir rutas del mismo día en curso
+        const resFecha = await pool.query(
+            `SELECT ($1::date = timezone('America/Mexico_City', now())::date) AS es_hoy`,
+            [bitacora.fecha_jornada]
+        );
+        if (!resFecha.rows[0].es_hoy) {
+            return res.status(400).json({ 
+                exito: false, 
+                error: 'No es posible reabrir rutas de días anteriores. Solo se pueden reabrir rutas del día de hoy.' 
+            });
+        }
+
+        // Condición 2: Mesa de Control no debe haberla firmado/liquidado ya
+        if (bitacora.estatus === 'Entregada') {
+            return res.status(400).json({ 
+                exito: false, 
+                error: 'No se puede reabrir porque esta ruta ya fue recibida y firmada por Mesa de Control.' 
+            });
+        }
+
+        if (bitacora.estatus === 'En_Ruta') {
+            return res.status(400).json({ 
+                exito: false, 
+                error: 'La ruta ya se encuentra abierta y activa.' 
+            });
+        }
+
+        // Si cumple todas las condiciones (estatus es 'Cerrada_Ruta' y es de hoy), reabrir:
+        await pool.query(
+            `UPDATE bitacoras_diarias 
+             SET estatus = 'En_Ruta', km_final = NULL, firmas_cierre = '{}'::jsonb 
+             WHERE id_bitacora = $1`,
+            [idBitacora]
+        );
+
+        res.json({ 
+            exito: true, 
+            mensaje: 'Ruta reabierta con éxito. El técnico ya puede visualizar su agenda y registrar nuevos servicios.' 
+        });
+    } catch (error) {
+        console.error("Error al reabrir ruta:", error);
+        res.status(500).json({ exito: false, error: error.message });
+    }
 });
 
 module.exports = router;
