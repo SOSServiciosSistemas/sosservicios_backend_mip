@@ -179,14 +179,14 @@ router.get('/admin/productos', async (req, res) => {
 });
 
 router.post('/admin/productos', async (req, res) => {
-    const { clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario } = req.body;
+    const { clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico } = req.body;
     try {
         await pool.query(`
-            INSERT INTO productos_insumos (clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-        `, [clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario]);
+            INSERT INTO productos_insumos (clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+        `, [clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico || null]);
         res.json({ exito: true });
-    } catch (error) { res.status(500).json({ exito: false }); }
+    } catch (error) { res.status(500).json({ exito: false, error: error.message }); }
 });
 
 module.exports = router;

@@ -35,11 +35,12 @@ router.get('/ordenes/:id/reporte-final', async (req, res) => {
         let productosEnriquecidos = [];
         for (const prod of productosJSON) {
             if (prod.clave_producto) {
-                const resProd = await pool.query('SELECT nombre_comercial, ingrediente_activo, registro_sanitario, unidad_medida FROM productos_insumos WHERE clave_producto = $1', [prod.clave_producto]);
+                const resProd = await pool.query('SELECT nombre_comercial, ingrediente_activo, registro_sanitario, unidad_medida, tipo_quimico FROM productos_insumos WHERE clave_producto = $1', [prod.clave_producto]);
                 if (resProd.rows.length > 0) {
                     const dbProd = resProd.rows[0];
                     productosEnriquecidos.push({
                         nombre_comercial: dbProd.nombre_comercial,
+                        tipo_quimico: dbProd.tipo_quimico || '',
                         ingrediente_activo: dbProd.ingrediente_activo || dbProd.nombre_comercial,
                         registro_sanitario: dbProd.registro_sanitario || 'N/A',
                         dosis: prod.dosis || '',

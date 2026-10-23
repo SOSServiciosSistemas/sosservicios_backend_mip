@@ -39,14 +39,14 @@ router.post('/inventario/entrada', async (req, res) => {
 
 router.get('/inventario/general', async (req, res) => {
     try {
-        const { rows } = await pool.query(`SELECT p.clave_producto, p.nombre_comercial, p.unidad_medida, p.capacidad_presentacion, i.cantidad_disponible, p.costo_promedio, i.fecha_caducidad FROM inventario_actual i JOIN productos_insumos p ON i.id_producto = p.id_producto JOIN almacenes a ON i.id_almacen = a.id_almacen WHERE a.tipo_almacen = 'General' ORDER BY p.nombre_comercial ASC;`);
+        const { rows } = await pool.query(`SELECT p.clave_producto, p.nombre_comercial, p.tipo_quimico, p.unidad_medida, p.capacidad_presentacion, i.cantidad_disponible, p.costo_promedio, i.fecha_caducidad FROM inventario_actual i JOIN productos_insumos p ON i.id_producto = p.id_producto JOIN almacenes a ON i.id_almacen = a.id_almacen WHERE a.tipo_almacen = 'General' ORDER BY p.nombre_comercial ASC;`);
         res.json({ exito: true, inventario: rows });
     } catch (error) { res.status(500).json({ exito: false }); }
 });
 
 router.get('/inventario/tecnicos', async (req, res) => {
     try {
-        const { rows } = await pool.query(`SELECT a.id_tecnico, a.nombre AS nombre_almacen, p.clave_producto, p.nombre_comercial, p.unidad_medida, p.capacidad_presentacion, i.cantidad_disponible FROM inventario_actual i JOIN productos_insumos p ON i.id_producto = p.id_producto JOIN almacenes a ON i.id_almacen = a.id_almacen WHERE a.tipo_almacen != 'General' ORDER BY a.nombre ASC, p.nombre_comercial ASC;`);
+        const { rows } = await pool.query(`SELECT a.id_tecnico, a.nombre AS nombre_almacen, p.clave_producto, p.nombre_comercial, p.tipo_quimico, p.unidad_medida, p.capacidad_presentacion, i.cantidad_disponible FROM inventario_actual i JOIN productos_insumos p ON i.id_producto = p.id_producto JOIN almacenes a ON i.id_almacen = a.id_almacen WHERE a.tipo_almacen != 'General' ORDER BY a.nombre ASC, p.nombre_comercial ASC;`);
         res.json({ exito: true, inventario: rows });
     } catch (error) { res.status(500).json({ exito: false }); }
 });
