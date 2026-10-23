@@ -35,8 +35,4 @@ pool.query('ALTER TABLE ordenes_trabajo ADD COLUMN IF NOT EXISTS costo_total_tra
     })
     .catch(err => console.warn('Aviso al verificar/inicializar costo_total_tratamiento:', err.message));
 
-// Asegurar columna tipo_quimico en productos_insumos
-pool.query('ALTER TABLE productos_insumos ADD COLUMN IF NOT EXISTS tipo_quimico VARCHAR(100);')
-    .catch(err => console.warn('Aviso al verificar columna tipo_quimico:', err.message));
-
 module.exports = pool;
