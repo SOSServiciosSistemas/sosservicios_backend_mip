@@ -42,6 +42,9 @@ router.get('/ordenes/:id/reporte-final', async (req, res) => {
                         nombre_comercial: dbProd.nombre_comercial,
                         ingrediente_activo: dbProd.ingrediente_activo || dbProd.nombre_comercial,
                         registro_sanitario: dbProd.registro_sanitario || 'N/A',
+                        dosis: prod.dosis || '',
+                        litros_preparados: prod.litros_preparados || '',
+                        gasto_real: prod.gasto_real || '',
                         cantidad_usada: prod.dosis || prod.gasto_real,
                         unidad_medida: dbProd.unidad_medida
                     });
@@ -51,6 +54,9 @@ router.get('/ordenes/:id/reporte-final', async (req, res) => {
                     nombre_comercial: prod.nombre_comercial || '',
                     ingrediente_activo: prod.ingrediente_activo || prod.nombre_comercial || '',
                     registro_sanitario: prod.registro_sanitario || 'N/A',
+                    dosis: prod.dosis || '',
+                    litros_preparados: prod.litros_preparados || '',
+                    gasto_real: prod.gasto_real || '',
                     cantidad_usada: prod.dosis || prod.gasto_real || '',
                     unidad_medida: prod.unidad_medida || ''
                 });
