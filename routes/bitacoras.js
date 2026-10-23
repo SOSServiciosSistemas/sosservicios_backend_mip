@@ -4,9 +4,44 @@ const pool = require('../database');
 
 router.get('/bitacoras/hoy/:id', async (req, res) => {
     try {
-        const result = await pool.query(`SELECT id_bitacora, estatus, km_inicial FROM bitacoras_diarias WHERE id_tecnico = $1 AND (estatus = 'En_Ruta' OR fecha_jornada = CURRENT_DATE) ORDER BY fecha_jornada DESC, id_bitacora DESC LIMIT 1`, [req.params.id]);
-        res.json({ exito: true, bitacora: result.rows.length > 0 ? result.rows[0] : null });
-    } catch (error) { res.status(500).json({ exito: false, error: 'Error BD' }); }
+        // 1. Revisar si tiene alguna bitácora de un día anterior que haya quedado abierta ('En_Ruta')
+        const resAnterior = await pool.query(`
+            SELECT id_bitacora, fecha_jornada, estatus, km_inicial 
+            FROM bitacoras_diarias 
+            WHERE id_tecnico = $1 
+              AND estatus = 'En_Ruta' 
+              AND fecha_jornada < timezone('America/Mexico_City', now())::date 
+            ORDER BY fecha_jornada ASC, id_bitacora ASC 
+            LIMIT 1
+        `, [req.params.id]);
+
+        if (resAnterior.rows.length > 0) {
+            return res.json({ 
+                exito: true, 
+                pendiente_cierre_anterior: true, 
+                bitacora: resAnterior.rows[0] 
+            });
+        }
+
+        // 2. Si no hay pendientes de días anteriores, buscar la bitácora del día actual
+        const resHoy = await pool.query(`
+            SELECT id_bitacora, fecha_jornada, estatus, km_inicial 
+            FROM bitacoras_diarias 
+            WHERE id_tecnico = $1 
+              AND fecha_jornada = timezone('America/Mexico_City', now())::date 
+            ORDER BY id_bitacora DESC 
+            LIMIT 1
+        `, [req.params.id]);
+
+        res.json({ 
+            exito: true, 
+            pendiente_cierre_anterior: false, 
+            bitacora: resHoy.rows.length > 0 ? resHoy.rows[0] : null 
+        });
+    } catch (error) { 
+        console.error("Error al obtener bitácora actual/pendiente:", error);
+        res.status(500).json({ exito: false, error: 'Error BD' }); 
+    }
 });
 
 router.get('/bitacoras/tecnico/:id_tecnico', async (req, res) => {
@@ -19,9 +54,33 @@ router.get('/bitacoras/tecnico/:id_tecnico', async (req, res) => {
 router.post('/bitacoras/abrir', async (req, res) => {
     const { id_tecnico, km_inicial, revision_vehiculo } = req.body;
     try {
-        const result = await pool.query(`INSERT INTO bitacoras_diarias (id_tecnico, km_inicial, revision_vehiculo, estatus) VALUES ($1, $2, $3, 'En_Ruta') RETURNING id_bitacora`, [id_tecnico, km_inicial, JSON.stringify(revision_vehiculo)]);
+        // Candado: Verificar si tiene alguna bitácora de un día anterior aún sin cerrar
+        const resPendiente = await pool.query(`
+            SELECT id_bitacora, fecha_jornada 
+            FROM bitacoras_diarias 
+            WHERE id_tecnico = $1 
+              AND estatus = 'En_Ruta' 
+              AND fecha_jornada < timezone('America/Mexico_City', now())::date 
+            LIMIT 1
+        `, [id_tecnico]);
+
+        if (resPendiente.rows.length > 0) {
+            return res.status(400).json({ 
+                exito: false, 
+                error: 'Tienes una ruta anterior abierta sin cerrar. Debes firmar y cerrar el día anterior antes de iniciar una nueva jornada.' 
+            });
+        }
+
+        const result = await pool.query(`
+            INSERT INTO bitacoras_diarias (id_tecnico, km_inicial, revision_vehiculo, estatus, fecha_jornada) 
+            VALUES ($1, $2, $3, 'En_Ruta', timezone('America/Mexico_City', now())::date) 
+            RETURNING id_bitacora
+        `, [id_tecnico, km_inicial, JSON.stringify(revision_vehiculo)]);
         res.json({ exito: true, id_bitacora: result.rows[0].id_bitacora });
-    } catch (error) { res.status(500).json({ exito: false }); }
+    } catch (error) { 
+        console.error("Error al abrir bitácora:", error);
+        res.status(500).json({ exito: false, error: error.message }); 
+    }
 });
 
 router.post('/bitacoras/actividad', async (req, res) => {
