@@ -180,6 +180,16 @@ router.get('/admin/productos', async (req, res) => {
 
 router.post('/admin/productos', async (req, res) => {
     const { clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico } = req.body;
+
+    if (categoria === 'Quimico') {
+        if (!tipo_quimico || String(tipo_quimico).trim() === '') {
+            return res.status(400).json({ exito: false, error: 'El Tipo de Químico es obligatorio.' });
+        }
+        if (!subcategoria || String(subcategoria).trim() === '') {
+            return res.status(400).json({ exito: false, error: 'La Subcategoría (Banda toxicológica) es obligatoria.' });
+        }
+    }
+
     try {
         await pool.query(`
             INSERT INTO productos_insumos (clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico) 
