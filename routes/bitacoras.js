@@ -10,7 +10,7 @@ router.get('/bitacoras/hoy/:id', async (req, res) => {
             FROM bitacoras_diarias 
             WHERE id_tecnico = $1 
               AND estatus = 'En_Ruta' 
-              AND fecha_jornada < timezone('America/Mexico_City', now())::date 
+              AND fecha_jornada::date < timezone('America/Mexico_City', now())::date 
             ORDER BY fecha_jornada ASC, id_bitacora ASC 
             LIMIT 1
         `, [req.params.id]);
@@ -28,7 +28,7 @@ router.get('/bitacoras/hoy/:id', async (req, res) => {
             SELECT id_bitacora, fecha_jornada, estatus, km_inicial 
             FROM bitacoras_diarias 
             WHERE id_tecnico = $1 
-              AND fecha_jornada = timezone('America/Mexico_City', now())::date 
+              AND fecha_jornada::date = timezone('America/Mexico_City', now())::date 
             ORDER BY id_bitacora DESC 
             LIMIT 1
         `, [req.params.id]);
@@ -60,7 +60,7 @@ router.post('/bitacoras/abrir', async (req, res) => {
             FROM bitacoras_diarias 
             WHERE id_tecnico = $1 
               AND estatus = 'En_Ruta' 
-              AND fecha_jornada < timezone('America/Mexico_City', now())::date 
+              AND fecha_jornada::date < timezone('America/Mexico_City', now())::date 
             LIMIT 1
         `, [id_tecnico]);
 
@@ -200,7 +200,7 @@ router.get('/bitacoras/historial', async (req, res) => {
         const result = await pool.query(`
             SELECT b.id_bitacora, b.fecha_jornada, u.nombre_completo AS tecnico, b.estatus, 
                    b.total_efectivo_entregado, b.km_inicial, b.km_final,
-                   (b.fecha_jornada = timezone('America/Mexico_City', now())::date) AS es_hoy
+                   (b.fecha_jornada::date = timezone('America/Mexico_City', now())::date) AS es_hoy
             FROM bitacoras_diarias b 
             JOIN usuarios u ON b.id_tecnico = u.id_usuario 
             ORDER BY b.fecha_jornada DESC, b.id_bitacora DESC;
@@ -213,7 +213,8 @@ router.post('/bitacoras/:id/reabrir', async (req, res) => {
     const idBitacora = req.params.id;
     try {
         const resCheck = await pool.query(
-            `SELECT id_bitacora, fecha_jornada, estatus, id_tecnico 
+            `SELECT id_bitacora, fecha_jornada, estatus, id_tecnico,
+                    (fecha_jornada::date = timezone('America/Mexico_City', now())::date) AS es_hoy
              FROM bitacoras_diarias 
              WHERE id_bitacora = $1`,
             [idBitacora]
@@ -224,19 +225,7 @@ router.post('/bitacoras/:id/reabrir', async (req, res) => {
 
         const bitacora = resCheck.rows[0];
 
-        // Condición 1: Solo se pueden reabrir rutas del mismo día en curso
-        const resFecha = await pool.query(
-            `SELECT ($1::date = timezone('America/Mexico_City', now())::date) AS es_hoy`,
-            [bitacora.fecha_jornada]
-        );
-        if (!resFecha.rows[0].es_hoy) {
-            return res.status(400).json({ 
-                exito: false, 
-                error: 'No es posible reabrir rutas de días anteriores. Solo se pueden reabrir rutas del día de hoy.' 
-            });
-        }
-
-        // Condición 2: Mesa de Control no debe haberla firmado/liquidado ya
+        // Condición 1: Mesa de Control no debe haberla firmado/liquidado ya
         if (bitacora.estatus === 'Entregada') {
             return res.status(400).json({ 
                 exito: false, 
@@ -251,7 +240,7 @@ router.post('/bitacoras/:id/reabrir', async (req, res) => {
             });
         }
 
-        // Si cumple todas las condiciones (estatus es 'Cerrada_Ruta' y es de hoy), reabrir:
+        // Si cumple las condiciones (estatus es 'Cerrada_Ruta'), reabrir restableciendo estatus y limpiando km_final y firmas:
         await pool.query(
             `UPDATE bitacoras_diarias 
              SET estatus = 'En_Ruta', km_final = NULL, firmas_cierre = '{}'::jsonb 
