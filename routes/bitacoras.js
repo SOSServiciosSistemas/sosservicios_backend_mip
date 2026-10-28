@@ -225,7 +225,15 @@ router.post('/bitacoras/:id/reabrir', async (req, res) => {
 
         const bitacora = resCheck.rows[0];
 
-        // Condición 1: Mesa de Control no debe haberla firmado/liquidado ya
+        // Condición 1: Solo se pueden reabrir rutas del día de hoy en curso
+        if (!bitacora.es_hoy) {
+            return res.status(400).json({ 
+                exito: false, 
+                error: 'No es posible reabrir rutas de días anteriores. Solo se pueden reabrir rutas del día de hoy.' 
+            });
+        }
+
+        // Condición 2: Mesa de Control no debe haberla firmado/liquidado ya
         if (bitacora.estatus === 'Entregada') {
             return res.status(400).json({ 
                 exito: false, 
