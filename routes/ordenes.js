@@ -71,13 +71,18 @@ router.get('/orden/:id', async (req, res) => {
         let totalCobradoPrevio = 0;
         let saldoPendiente = costoTotalTratamiento;
 
+        let fechaServicioAnterior = null;
+
         if (esMultiTratamiento) {
-            // Consultar todas las órdenes del mismo grupo para calcular historial de cobro
+            // Consultar todas las órdenes del mismo grupo para calcular historial de cobro, fecha anterior y plagas
             const resGrupo = await pool.query(`
-                SELECT id_orden, num_tratamiento, total_tratamientos, estatus, ingresos_cobrados, costo, costo_total_tratamiento
-                FROM ordenes_trabajo
-                WHERE id_grupo = $1
-                ORDER BY num_tratamiento ASC
+                SELECT o.id_orden, o.num_tratamiento, o.total_tratamientos, o.estatus, 
+                       o.ingresos_cobrados, o.costo, o.costo_total_tratamiento, o.fecha_programada,
+                       o.plagas_a_tratar, r.fecha_reporte
+                FROM ordenes_trabajo o
+                LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden
+                WHERE o.id_grupo = $1
+                ORDER BY o.num_tratamiento ASC
             `, [orden.id_grupo]);
 
             const ordenesGrupo = resGrupo.rows;
@@ -99,8 +104,66 @@ router.get('/orden/:id', async (req, res) => {
 
             // Saldo pendiente para esta visita
             saldoPendiente = Math.max(0, costoTotalTratamiento - totalCobradoPrevio);
+
+            // Determinar la fecha del servicio anterior dentro de este mismo tratamiento (visita anterior num_tratamiento < numTrat)
+            const visitasPreviasTratamiento = ordenesGrupo
+                .filter(o => parseInt(o.num_tratamiento) < numTrat)
+                .sort((a, b) => parseInt(b.num_tratamiento) - parseInt(a.num_tratamiento));
+
+            if (visitasPreviasTratamiento.length > 0) {
+                const vAnt = visitasPreviasTratamiento[0];
+                fechaServicioAnterior = vAnt.fecha_reporte || vAnt.fecha_programada;
+            }
+
+            // Si esta visita no tiene plagas especificadas, heredar las plagas registradas en la visita 1
+            if ((!orden.plagas_a_tratar || (Array.isArray(orden.plagas_a_tratar) && orden.plagas_a_tratar.length === 0)) && orden1 && orden1.plagas_a_tratar) {
+                try {
+                    const plagasTrat = typeof orden1.plagas_a_tratar === 'string' ? JSON.parse(orden1.plagas_a_tratar) : orden1.plagas_a_tratar;
+                    if (Array.isArray(plagasTrat) && plagasTrat.length > 0) {
+                        orden.plagas_a_tratar = plagasTrat;
+                    }
+                } catch (e) {}
+            }
         }
 
+        // Si es una orden de tratamiento con num_tratamiento > 1 pero sin id_grupo, buscar la visita previa por ubicación
+        if (!fechaServicioAnterior && numTrat > 1 && orden.id_ubicacion) {
+            const resPrevTrat = await pool.query(`
+                SELECT COALESCE(r.fecha_reporte, o.fecha_programada) AS fecha_anterior
+                FROM ordenes_trabajo o
+                LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden
+                WHERE o.id_ubicacion = $1 
+                  AND o.id_orden != $2 
+                  AND o.num_tratamiento < $3
+                ORDER BY o.num_tratamiento DESC, o.fecha_programada DESC
+                LIMIT 1
+            `, [orden.id_ubicacion, orden.id_orden, numTrat]);
+
+            if (resPrevTrat.rows.length > 0) {
+                fechaServicioAnterior = resPrevTrat.rows[0].fecha_anterior;
+            }
+        }
+
+        // Si es un servicio individual (no tratamiento), buscar si hay un servicio previo completado en la misma ubicación
+        if (!fechaServicioAnterior && !esMultiTratamiento && orden.id_ubicacion) {
+            const resPrevUbi = await pool.query(`
+                SELECT COALESCE(r.fecha_reporte, o.fecha_programada) AS fecha_anterior
+                FROM ordenes_trabajo o
+                LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden
+                WHERE o.id_ubicacion = $1 
+                  AND o.id_orden != $2 
+                  AND o.fecha_programada < $3
+                  AND o.estatus = 'Completado'
+                ORDER BY o.fecha_programada DESC
+                LIMIT 1
+            `, [orden.id_ubicacion, orden.id_orden, orden.fecha_programada]);
+
+            if (resPrevUbi.rows.length > 0) {
+                fechaServicioAnterior = resPrevUbi.rows[0].fecha_anterior;
+            }
+        }
+
+        orden.fecha_servicio_anterior = fechaServicioAnterior;
         orden.es_multitratamiento = esMultiTratamiento;
         orden.costo_total_tratamiento = costoTotalTratamiento;
         orden.total_cobrado_previo = totalCobradoPrevio;
