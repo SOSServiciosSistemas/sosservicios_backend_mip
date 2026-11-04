@@ -17,7 +17,7 @@ router.post('/login', async (req, res) => {
     const { usuario, password } = req.body;
     try {
         const result = await pool.query(
-            'SELECT id_usuario, nombre_completo, rol FROM usuarios WHERE usuario = $1 AND password_hash = $2 AND activo = true',
+            'SELECT id_usuario, nombre_completo, rol, firma_digital FROM usuarios WHERE usuario = $1 AND password_hash = $2 AND activo = true',
             [usuario, password]
         );
         if (result.rows.length > 0) {
@@ -27,6 +27,23 @@ router.post('/login', async (req, res) => {
         }
     } catch (error) {
         res.status(500).json({ exito: false, error: 'Error interno del servidor' });
+    }
+});
+
+// Obtener firma digital de un usuario (para técnicos o mesa de control)
+router.get('/usuarios/:id/firma', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT id_usuario, nombre_completo, firma_digital FROM usuarios WHERE id_usuario = $1 AND activo = true',
+            [req.params.id]
+        );
+        if (result.rows.length > 0) {
+            res.json({ exito: true, usuario: result.rows[0] });
+        } else {
+            res.status(404).json({ exito: false, error: 'Usuario no encontrado' });
+        }
+    } catch (error) {
+        res.status(500).json({ exito: false, error: 'Error al consultar firma' });
     }
 });
 

@@ -76,8 +76,20 @@ router.post('/reportes', async (req, res) => {
         const horaInicioSegura = hora_inicio ? hora_inicio : new Date().toISOString();
         const horaFinSegura = hora_fin ? hora_fin : new Date().toISOString();
 
-        // 1. Guardar reporte MIP
-        await client.query(`INSERT INTO reportes_mip (id_orden, letra_formato, hora_inicio, hora_fin, detalles_ejecucion, fecha_reporte) VALUES ($1, $2, $3, $4, $5, timezone('America/Mexico_City', now()))`, [id_orden, letra, horaInicioSegura, horaFinSegura, JSON.stringify(detalles)]);
+        // 1. Asegurar firma del técnico/inspector si no viene explícita en los detalles
+        let detallesFinal = detalles || {};
+        if (typeof detallesFinal === 'string') {
+            try { detallesFinal = JSON.parse(detallesFinal); } catch (e) {}
+        }
+        if (!detallesFinal.firma_inspector && id_tecnico) {
+            const resTecFirma = await client.query('SELECT firma_digital FROM usuarios WHERE id_usuario = $1', [id_tecnico]);
+            if (resTecFirma.rows.length > 0 && resTecFirma.rows[0].firma_digital) {
+                detallesFinal.firma_inspector = resTecFirma.rows[0].firma_digital;
+            }
+        }
+
+        // Guardar reporte MIP
+        await client.query(`INSERT INTO reportes_mip (id_orden, letra_formato, hora_inicio, hora_fin, detalles_ejecucion, fecha_reporte) VALUES ($1, $2, $3, $4, $5, timezone('America/Mexico_City', now()))`, [id_orden, letra, horaInicioSegura, horaFinSegura, JSON.stringify(detallesFinal)]);
 
         // 2. Obtener datos de la orden actual
         const resOrden = await client.query(`
@@ -99,12 +111,12 @@ router.post('/reportes', async (req, res) => {
             ? Math.max(0, parseFloat(monto_cobrado) || 0)
             : (parseFloat(ordenActual.ingresos_cobrados) || 0);
 
-        // 3. Marcar completada la orden y registrar el monto cobrado real en esta visita
+        // 3. Marcar completada la orden, vincular id_tecnico y registrar el monto cobrado real en esta visita
         await client.query(`
             UPDATE ordenes_trabajo 
-            SET estatus = 'Completado', ingresos_cobrados = $1 
-            WHERE id_orden = $2
-        `, [montoRealCobrado, id_orden]);
+            SET estatus = 'Completado', ingresos_cobrados = $1, id_tecnico = COALESCE(id_tecnico, $2)
+            WHERE id_orden = $3
+        `, [montoRealCobrado, id_tecnico ? parseInt(id_tecnico) : null, id_orden]);
 
         // 4. Lógica de balance y cobranza para tratamientos multi-visita
         if (esMultiTratamiento) {
