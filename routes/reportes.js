@@ -15,14 +15,21 @@ router.get('/reportes-mip/:id_orden', async (req, res) => {
 router.get('/ordenes/:id/reporte-final', async (req, res) => {
     try {
         const { rows } = await pool.query(`
-            SELECT o.id_orden, o.tipo_servicio, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.id_grupo, o.costo_total_tratamiento, o.ingresos_cobrados, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.colonia, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
-            FROM ordenes_trabajo o JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion JOIN clientes c ON ub.id_cliente = c.id_cliente LEFT JOIN usuarios u ON o.id_tecnico = u.id_usuario LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden LEFT JOIN control_pagos cp ON o.id_orden = cp.id_orden WHERE o.id_orden = $1
+            SELECT o.id_orden, o.tipo_servicio, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.id_grupo, o.costo_total_tratamiento, o.ingresos_cobrados, o.plagas_a_tratar, o.observaciones_mesa, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.colonia, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
+            FROM ordenes_trabajo o 
+            LEFT JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion 
+            LEFT JOIN clientes c ON ub.id_cliente = c.id_cliente 
+            LEFT JOIN usuarios u ON o.id_tecnico = u.id_usuario 
+            LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden 
+            LEFT JOIN control_pagos cp ON o.id_orden = cp.id_orden 
+            WHERE o.id_orden = $1
         `, [req.params.id]);
         
         if (rows.length === 0) return res.status(404).json({ exito: false, error: 'Orden no encontrada' });
 
         const ordenData = rows[0];
         let productosJSON = [];
+        ordenData.detalles_completos = {};
         
         if (ordenData.detalles_ejecucion) {
             const detalles = typeof ordenData.detalles_ejecucion === 'string' ? JSON.parse(ordenData.detalles_ejecucion) : ordenData.detalles_ejecucion;
@@ -210,10 +217,23 @@ router.post('/reportes', async (req, res) => {
     }
 });
 
-// 4. RUTA PARA RECIBIR Y GUARDAR EL PDF EN WINDOWS
+// 4. RUTA PARA RECIBIR Y GUARDAR EL PDF EN WINDOWS (Y ACTUALIZAR FIRMA SI SE ENVÍA)
 router.post('/reportes/guardar-pdf', async (req, res) => {
-    const { folio, pdfBase64 } = req.body;
+    const { folio, pdfBase64, firma_cliente } = req.body;
     try {
+        // Si se envió la firma del cliente, actualizar los detalles del reporte
+        if (firma_cliente) {
+            const resRep = await pool.query('SELECT detalles_ejecucion FROM reportes_mip WHERE id_orden = $1', [folio]);
+            if (resRep.rows.length > 0) {
+                let detalles = resRep.rows[0].detalles_ejecucion || {};
+                if (typeof detalles === 'string') {
+                    try { detalles = JSON.parse(detalles); } catch (e) {}
+                }
+                detalles.firma_cliente = firma_cliente;
+                await pool.query('UPDATE reportes_mip SET detalles_ejecucion = $1 WHERE id_orden = $2', [JSON.stringify(detalles), folio]);
+            }
+        }
+
         let base64Puro = pdfBase64.includes(',') ? pdfBase64.split(',')[1] : pdfBase64;
         const fs = require('fs');
         const path = require('path');
@@ -225,6 +245,27 @@ router.post('/reportes/guardar-pdf', async (req, res) => {
         
         res.json({ exito: true, ruta: filePath });
     } catch (error) { res.status(500).json({ exito: false, error: 'Error escribiendo PDF' }); }
+});
+
+// 5. RUTA PARA GUARDAR LA FIRMA DEL CLIENTE EN DETALLES DEL REPORTE
+router.put('/reportes/:id/firma-cliente', async (req, res) => {
+    const { firma_cliente } = req.body;
+    try {
+        const resRep = await pool.query('SELECT detalles_ejecucion FROM reportes_mip WHERE id_orden = $1', [req.params.id]);
+        if (resRep.rows.length === 0) {
+            return res.status(404).json({ exito: false, error: 'Reporte no encontrado' });
+        }
+        let detalles = resRep.rows[0].detalles_ejecucion || {};
+        if (typeof detalles === 'string') {
+            try { detalles = JSON.parse(detalles); } catch (e) {}
+        }
+        detalles.firma_cliente = firma_cliente;
+        await pool.query('UPDATE reportes_mip SET detalles_ejecucion = $1 WHERE id_orden = $2', [JSON.stringify(detalles), req.params.id]);
+        res.json({ exito: true, mensaje: 'Firma de cliente guardada exitosamente' });
+    } catch (error) {
+        console.error("Error al guardar firma del cliente:", error);
+        res.status(500).json({ exito: false, error: error.message });
+    }
 });
 
 module.exports = router;
