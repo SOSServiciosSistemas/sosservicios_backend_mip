@@ -15,7 +15,7 @@ router.get('/reportes-mip/:id_orden', async (req, res) => {
 router.get('/ordenes/:id/reporte-final', async (req, res) => {
     try {
         const { rows } = await pool.query(`
-            SELECT o.id_orden, o.tipo_servicio, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.id_grupo, o.costo_total_tratamiento, o.ingresos_cobrados, o.plagas_a_tratar, o.observaciones_mesa, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.colonia, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
+            SELECT o.id_orden, o.tipo_servicio, o.fecha_programada AS fecha_servicio, o.num_tratamiento, o.total_tratamientos, o.id_grupo, o.costo_total_tratamiento, o.costo AS costo_mesa, o.ingresos_cobrados, o.plagas_a_tratar, o.observaciones_mesa, r.hora_inicio AS hora_llegada, r.hora_fin AS hora_salida, u.nombre_completo AS nombre_tecnico, u.firma_digital AS firma_tecnico, r.detalles_ejecucion, c.nombre AS nombre_cliente, c.contacto AS persona_contacto, c.telefono, c.giro AS giro_comercial, ub.domicilio AS direccion_completa, ub.colonia, ub.ciudad, cp.costo_con_iva, cp.costo_sin_iva, cp.requiere_factura
             FROM ordenes_trabajo o 
             LEFT JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion 
             LEFT JOIN clientes c ON ub.id_cliente = c.id_cliente 
@@ -70,6 +70,43 @@ router.get('/ordenes/:id/reporte-final', async (req, res) => {
                 });
             }
         }
+
+        // Obtener fecha tentativa del próximo servicio si aplica
+        let proximoServicio = null;
+        const numTratActual = parseInt(ordenData.num_tratamiento) || 1;
+        const totTratActual = parseInt(ordenData.total_tratamientos) || 1;
+
+        if (ordenData.id_grupo && totTratActual > 1 && numTratActual < totTratActual) {
+            const resSig = await pool.query(
+                'SELECT fecha_programada FROM ordenes_trabajo WHERE id_grupo = $1 AND num_tratamiento = $2 ORDER BY id_orden ASC LIMIT 1',
+                [ordenData.id_grupo, numTratActual + 1]
+            );
+            if (resSig.rows.length > 0 && resSig.rows[0].fecha_programada) {
+                proximoServicio = resSig.rows[0].fecha_programada;
+            }
+        }
+
+        if (!proximoServicio && ordenData.id_orden) {
+            const resSigUbic = await pool.query(`
+                SELECT fecha_programada 
+                FROM ordenes_trabajo 
+                WHERE id_ubicacion = (SELECT id_ubicacion FROM ordenes_trabajo WHERE id_orden = $1)
+                  AND id_orden != $1
+                  AND fecha_programada > $2
+                  AND estatus NOT IN ('Cancelado')
+                ORDER BY fecha_programada ASC LIMIT 1
+            `, [ordenData.id_orden, ordenData.fecha_servicio || new Date()]);
+            if (resSigUbic.rows.length > 0 && resSigUbic.rows[0].fecha_programada) {
+                proximoServicio = resSigUbic.rows[0].fecha_programada;
+            }
+        }
+
+        if (!proximoServicio && ordenData.detalles_completos && ordenData.detalles_completos.fecha_proxima) {
+            proximoServicio = ordenData.detalles_completos.fecha_proxima;
+        }
+
+        ordenData.fecha_proximo_servicio = proximoServicio;
+
         res.json({ exito: true, orden: ordenData, productos_utilizados: productosEnriquecidos });
     } catch (error) { res.status(500).json({ exito: false, error: 'Error del servidor' }); }
 });
