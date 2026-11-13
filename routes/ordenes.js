@@ -12,8 +12,16 @@ router.get('/agenda-general', async (req, res) => {
         `);
         const eventos = result.rows.map(orden => {
             let color = '#6c757d', icono = '🕒';
-            if (orden.estatus === 'Confirmado' || orden.estatus === 'Completado') { color = '#198754'; icono = '✔'; }
-            else if (orden.estatus === 'Cancelado') { color = '#dc3545'; icono = '✖'; }
+            if (orden.estatus === 'Completado') {
+                color = '#0d6efd'; // Azul para servicios completados
+                icono = '✔';
+            } else if (orden.estatus === 'Confirmado') {
+                color = '#198754'; // Verde para servicios confirmados
+                icono = '✔';
+            } else if (orden.estatus === 'Cancelado') {
+                color = '#dc3545'; // Rojo para cancelados
+                icono = '✖';
+            }
             return { id: orden.id_orden, title: `${icono} ${orden.nombre_cliente}`, start: orden.fecha_programada, color: color, extendedProps: { estatus: orden.estatus } };
         });
         res.json(eventos);
