@@ -22,7 +22,16 @@ router.get('/agenda-general', async (req, res) => {
                 color = '#dc3545'; // Rojo para cancelados
                 icono = '✖';
             }
-            return { id: orden.id_orden, title: `${icono} ${orden.nombre_cliente}`, start: orden.fecha_programada, color: color, extendedProps: { estatus: orden.estatus } };
+            return {
+                id: orden.id_orden,
+                title: `${icono} ${orden.nombre_cliente}`,
+                start: orden.fecha_programada,
+                color: color,
+                backgroundColor: color,
+                borderColor: color,
+                textColor: '#ffffff',
+                extendedProps: { estatus: orden.estatus }
+            };
         });
         res.json(eventos);
     } catch (error) {
