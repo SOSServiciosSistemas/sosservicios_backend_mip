@@ -5,26 +5,24 @@ const pool = require('../database');
 
 async function limpiarBaseDatos() {
     const args = process.argv.slice(2);
-    const borrarProductos = args.includes('--borrar-productos') || args.includes('--con-productos');
 
-    // Filtrar flags para obtener argumentos de texto
-    const textArgs = args.filter(a => !a.startsWith('--'));
-    const adminUser = textArgs[0] || 'admin';
-    const adminPass = textArgs[1] || 'admin123';
-    const adminNombre = textArgs[2] || 'Administrador General';
+    // Credenciales por defecto solicitadas por el usuario
+    const adminUser = args[0] || 'veronicanegrete';
+    const adminPass = args[1] || 'veroadminsosservicios';
+    const adminNombre = args[2] || 'Verónica Negrete';
 
     const client = await pool.connect();
 
     try {
         console.log('\n======================================================');
-        console.log('   SOS SERVICIOS - REINICIO DE BASE DE DATOS');
+        console.log('   SOS SERVICIOS - REINICIO TOTAL DE BASE DE DATOS');
         console.log('======================================================');
-        console.log('Iniciando limpieza de tablas de prueba...\n');
+        console.log('Vaciando absolutamente todas las tablas del sistema...\n');
 
         await client.query('BEGIN');
 
-        // 1. Tablas a limpiar
-        let tablas = [
+        // 1. Todas las tablas a vaciar (incluyendo productos, clientes, servicios, inventarios)
+        const tablas = [
             'reportes_mip',
             'control_pagos',
             'ordenes_trabajo',
@@ -34,36 +32,30 @@ async function limpiarBaseDatos() {
             'movimientos_inventario',
             'inventario_actual',
             'almacenes',
+            'productos_insumos',
             'usuarios'
         ];
 
-        if (borrarProductos) {
-            tablas.push('productos_insumos');
-            console.log('⚠ Se incluirá la eliminación del catálogo de productos e insumos químicos.');
-        } else {
-            console.log('ℹ Se conservará el catálogo de productos_insumos (para vaciarlo también usa el flag --borrar-productos).');
-        }
-
         const queryTruncate = `TRUNCATE TABLE ${tablas.join(', ')} RESTART IDENTITY CASCADE;`;
         await client.query(queryTruncate);
-        console.log('✔ Todas las tablas operativas han sido vaciadas.');
-        console.log('✔ Los contadores de ID (folios, órdenes, clientes) se reiniciaron a 1.');
+        console.log('✔ Todas las tablas (servicios, clientes, productos, etc.) han quedado en blanco.');
+        console.log('✔ Todos los contadores de folios e IDs se reiniciaron a 1.');
 
-        // 2. Crear Almacén Central obligatorio para inventario
+        // 2. Recrear el Almacén Central (necesario para el funcionamiento del módulo de inventario)
         await client.query(`
             INSERT INTO almacenes (nombre, tipo_almacen) 
             VALUES ('Almacén Central', 'General');
         `);
-        console.log('✔ Almacén Central (General) recreado con éxito.');
+        console.log('✔ Almacén Central (General) listo para inventarios.');
 
-        // 3. Crear usuario Administrador inicial
+        // 3. Crear el único usuario Administrador
         await client.query(`
             INSERT INTO usuarios (nombre_completo, usuario, password_hash, rol, activo)
             VALUES ($1, $2, $3, 'Administrador', true);
         `, [adminNombre, adminUser, adminPass]);
 
         console.log('\n------------------------------------------------------');
-        console.log('✔ Usuario Administrador creado exitosamente:');
+        console.log('✔ Único usuario registrado en el sistema:');
         console.log(`   - Nombre:     ${adminNombre}`);
         console.log(`   - Usuario:    ${adminUser}`);
         console.log(`   - Contraseña: ${adminPass}`);
@@ -71,7 +63,7 @@ async function limpiarBaseDatos() {
         console.log('------------------------------------------------------');
 
         await client.query('COMMIT');
-        console.log('\n Operación finalizada con éxito. El sistema está limpio y listo para arrancar.\n');
+        console.log('\n Éxito: La base de datos está totalmente en blanco y lista para operar.\n');
 
     } catch (error) {
         await client.query('ROLLBACK');
