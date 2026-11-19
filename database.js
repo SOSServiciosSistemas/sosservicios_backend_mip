@@ -14,9 +14,12 @@ const pool = new Pool({
 pool.query('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS firma_digital TEXT;')
     .catch(err => console.warn('Aviso al verificar columna firma_digital:', err.message));
 
-// Asegurar columnas de costo y costo_total_tratamiento en ordenes_trabajo para soporte de tratamientos multi-visita
+// Asegurar columnas de costo, costo_total_tratamiento y subtipo_monitoreo en ordenes_trabajo
 pool.query('ALTER TABLE ordenes_trabajo ADD COLUMN IF NOT EXISTS costo NUMERIC(10,2);')
     .catch(err => console.warn('Aviso al verificar columna costo:', err.message));
+
+pool.query('ALTER TABLE ordenes_trabajo ADD COLUMN IF NOT EXISTS subtipo_monitoreo VARCHAR(50);')
+    .catch(err => console.warn('Aviso al verificar columna subtipo_monitoreo:', err.message));
 
 pool.query('ALTER TABLE ordenes_trabajo ADD COLUMN IF NOT EXISTS costo_total_tratamiento NUMERIC(10,2);')
     .then(() => {
