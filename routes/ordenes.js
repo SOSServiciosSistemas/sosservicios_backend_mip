@@ -42,7 +42,7 @@ router.get('/agenda-general', async (req, res) => {
 router.get('/agenda/:id', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT o.id_orden, o.fecha_programada, o.tipo_servicio, o.observaciones_mesa, o.estatus, c.nombre AS nombre_cliente, u.colonia, u.domicilio
+            SELECT o.id_orden, o.fecha_programada, o.tipo_servicio, o.subtipo_monitoreo, o.subtipo_servicio, o.observaciones_mesa, o.estatus, c.nombre AS nombre_cliente, u.colonia, u.domicilio
             FROM ordenes_trabajo o JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion JOIN clientes c ON u.id_cliente = c.id_cliente
             WHERE o.id_tecnico = $1 AND o.estatus IN ('Pendiente', 'Confirmado') AND o.fecha_programada::date = timezone('America/Mexico_City', now())::date
             ORDER BY o.fecha_programada ASC;
@@ -56,7 +56,7 @@ router.get('/agenda/:id', async (req, res) => {
 router.get('/historial-ordenes', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT o.id_orden, o.fecha_programada, o.tipo_servicio, o.estatus, c.nombre AS nombre_cliente, u.nombre_completo AS nombre_tecnico, ub.domicilio, ub.colonia, ub.ciudad
+            SELECT o.id_orden, o.fecha_programada, o.tipo_servicio, o.subtipo_monitoreo, o.subtipo_servicio, o.estatus, c.nombre AS nombre_cliente, u.nombre_completo AS nombre_tecnico, ub.domicilio, ub.colonia, ub.ciudad
             FROM ordenes_trabajo o JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion JOIN clientes c ON ub.id_cliente = c.id_cliente LEFT JOIN usuarios u ON o.id_tecnico = u.id_usuario ORDER BY o.fecha_programada ASC;
         `);
         res.json({ exito: true, historial: result.rows });
@@ -201,10 +201,11 @@ router.get('/orden/:id', async (req, res) => {
 });
 
 router.post('/ordenes', async (req, res) => {
-    const { id_ubicacion, id_tecnico, fecha_programada, tipo_servicio, observaciones_mesa, costo, num_tratamiento, total_tratamientos, frecuencia, plagas_a_tratar } = req.body;
+    const { id_ubicacion, id_tecnico, fecha_programada, tipo_servicio, subtipo_servicio, subtipo_monitoreo, observaciones_mesa, costo, num_tratamiento, total_tratamientos, frecuencia, plagas_a_tratar } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        const subtipoVal = subtipo_servicio || subtipo_monitoreo || null;
         const total = parseInt(total_tratamientos) || 0;
         const inicioTratamiento = parseInt(num_tratamiento) || 0;
         const idGrupo = (total > 1) ? Date.now().toString() : null; 
@@ -219,9 +220,9 @@ router.post('/ordenes', async (req, res) => {
             const costoVisita = (total > 1) ? ((tr === 1) ? costoTotalTratamiento : 0) : costoTotalTratamiento;
 
             const result = await client.query(`
-                INSERT INTO ordenes_trabajo (id_ubicacion, id_tecnico, fecha_programada, tipo_servicio, observaciones_mesa, estatus, ingresos_cobrados, costo, costo_total_tratamiento, num_tratamiento, total_tratamientos, plagas_a_tratar, id_grupo)
-                VALUES ($1, $2, $3, $4, $5, 'Pendiente', $6, $7, $8, $9, $10, $11, $12) RETURNING id_orden;
-            `, [id_ubicacion, id_tecnico, fechaActual, tipo_servicio, observaciones_mesa, costoVisita, costoVisita, costoTotalTratamiento, tr, total, plagas, idGrupo]);
+                INSERT INTO ordenes_trabajo (id_ubicacion, id_tecnico, fecha_programada, tipo_servicio, subtipo_monitoreo, subtipo_servicio, observaciones_mesa, estatus, ingresos_cobrados, costo, costo_total_tratamiento, num_tratamiento, total_tratamientos, plagas_a_tratar, id_grupo)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pendiente', $8, $9, $10, $11, $12, $13, $14) RETURNING id_orden;
+            `, [id_ubicacion, id_tecnico, fechaActual, tipo_servicio, subtipoVal, subtipoVal, observaciones_mesa, costoVisita, costoVisita, costoTotalTratamiento, tr, total, plagas, idGrupo]);
             
             if (i === 0) primerId = result.rows[0].id_orden;
             if (frecuencia === 'Semanal') fechaActual.setDate(fechaActual.getDate() + 7);
@@ -239,12 +240,13 @@ router.post('/ordenes', async (req, res) => {
 });
 
 router.put('/ordenes/:id', async (req, res) => {
-    const { id_ubicacion, fecha_programada, id_tecnico, tipo_servicio, costo, observaciones_mesa } = req.body;
+    const { id_ubicacion, fecha_programada, id_tecnico, tipo_servicio, subtipo_servicio, subtipo_monitoreo, costo, observaciones_mesa } = req.body;
     try {
+        const subtipoVal = subtipo_servicio || subtipo_monitoreo || null;
         const resOrden = await pool.query('SELECT id_grupo, num_tratamiento, total_tratamientos FROM ordenes_trabajo WHERE id_orden = $1', [req.params.id]);
         const ordenActual = resOrden.rows[0];
 
-        await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, fecha_programada=$2, id_tecnico=$3, tipo_servicio=$4, costo=$5, observaciones_mesa=$6 WHERE id_orden=$7`, [id_ubicacion, fecha_programada, id_tecnico, tipo_servicio, costo, observaciones_mesa, req.params.id]);
+        await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, fecha_programada=$2, id_tecnico=$3, tipo_servicio=$4, subtipo_monitoreo=$5, subtipo_servicio=$6, costo=$7, observaciones_mesa=$8 WHERE id_orden=$9`, [id_ubicacion, fecha_programada, id_tecnico, tipo_servicio, subtipoVal, subtipoVal, costo, observaciones_mesa, req.params.id]);
 
         if (ordenActual && ordenActual.id_grupo) {
             // Si se edita la visita 1 de un grupo, actualizar costo_total_tratamiento en todo el grupo
@@ -252,7 +254,7 @@ router.put('/ordenes/:id', async (req, res) => {
                 await pool.query(`UPDATE ordenes_trabajo SET costo_total_tratamiento=$1 WHERE id_grupo=$2`, [costo, ordenActual.id_grupo]);
             }
             // Actualizar ubicación y tipo_servicio en visitas pendientes consecutivas sin sobreescribir sus costos de visita a 0
-            await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, tipo_servicio=$2 WHERE id_grupo=$3 AND num_tratamiento>$4 AND estatus='Pendiente'`, [id_ubicacion, tipo_servicio, ordenActual.id_grupo, ordenActual.num_tratamiento]);
+            await pool.query(`UPDATE ordenes_trabajo SET id_ubicacion=$1, tipo_servicio=$2, subtipo_monitoreo=$3, subtipo_servicio=$4 WHERE id_grupo=$5 AND num_tratamiento>$6 AND estatus='Pendiente'`, [id_ubicacion, tipo_servicio, subtipoVal, subtipoVal, ordenActual.id_grupo, ordenActual.num_tratamiento]);
         }
         res.json({ exito: true });
     } catch (error) { res.status(500).json({ exito: false }); }

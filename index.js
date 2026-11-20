@@ -20,6 +20,7 @@ app.use('/api', require('./routes/reportes'));
 app.use('/api', require('./routes/bitacoras'));
 app.use('/api', require('./routes/admin'));
 app.use('/api', require('./routes/inventario'));
+app.use('/api', require('./routes/monitoreo'));
 
 // ====================================================================
 // INICIALIZACIÓN DEL SERVIDOR
