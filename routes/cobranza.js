@@ -38,6 +38,7 @@ router.get('/cobranza/resumen', async (req, res) => {
                    o.tipo_servicio, o.subtipo_servicio, o.subtipo_monitoreo,
                    o.estatus, o.costo, o.costo_total_tratamiento, o.ingresos_cobrados,
                    o.num_tratamiento, o.total_tratamientos, o.id_grupo,
+                   COALESCE(cp.costo_con_iva, 0) AS costo_con_iva,
                    COALESCE(cp.requiere_factura, false) AS requiere_factura,
                    c.id_cliente, c.nombre AS nombre_cliente, c.telefono, c.giro,
                    u.nombre_ubicacion, u.domicilio, u.colonia, u.ciudad,
@@ -85,8 +86,9 @@ router.get('/cobranza/resumen', async (req, res) => {
                 if (cTotal > gruposInfo[o.id_grupo].costoTotal) {
                     gruposInfo[o.id_grupo].costoTotal = cTotal;
                 }
-                if (parseInt(o.num_tratamiento) === 1 && parseFloat(o.costo || 0) > gruposInfo[o.id_grupo].costoTotal) {
-                    gruposInfo[o.id_grupo].costoTotal = parseFloat(o.costo);
+                const cOrden = parseFloat(o.costo || o.costo_con_iva || 0);
+                if (parseInt(o.num_tratamiento) === 1 && cOrden > gruposInfo[o.id_grupo].costoTotal) {
+                    gruposInfo[o.id_grupo].costoTotal = cOrden;
                 }
 
                 const pagadoEnOrden = Math.max(
@@ -112,14 +114,21 @@ router.get('/cobranza/resumen', async (req, res) => {
 
             if (esMulti && gruposInfo[o.id_grupo]) {
                 const g = gruposInfo[o.id_grupo];
-                costoCalculado = g.costoTotal || parseFloat(o.costo || o.costo_total_tratamiento || 0);
+                costoCalculado = g.costoTotal || parseFloat(o.costo || o.costo_con_iva || o.costo_total_tratamiento || 0);
                 totalCobradoCalculado = g.totalPagado;
                 saldoPendienteCalculado = Math.max(0, costoCalculado - totalCobradoCalculado);
             } else {
-                costoCalculado = parseFloat(o.costo || o.costo_total_tratamiento || o.ingresos_cobrados || 0);
+                costoCalculado = parseFloat(o.costo || o.costo_con_iva || o.costo_total_tratamiento || 0);
+                // Si el costo es 0 pero ingresos_cobrados tenía el valor asignado al agendar, usarlo como costo
+                if (costoCalculado === 0 && parseFloat(o.ingresos_cobrados || 0) > 0 && o.estatus !== 'Completado') {
+                    costoCalculado = parseFloat(o.ingresos_cobrados);
+                }
+
+                // Dinero realmente cobrado: SOLO pagos registrados o cobro en sitio si el servicio ya fue completado
+                const cobradoHistoricoOrden = (o.estatus === 'Completado') ? (parseFloat(o.ingresos_cobrados) || 0) : 0;
                 totalCobradoCalculado = Math.max(
                     parseFloat(o.total_pagos_registrados || 0),
-                    parseFloat(o.ingresos_cobrados || 0)
+                    cobradoHistoricoOrden
                 );
                 saldoPendienteCalculado = Math.max(0, costoCalculado - totalCobradoCalculado);
             }
@@ -134,12 +143,18 @@ router.get('/cobranza/resumen', async (req, res) => {
             let estadoPago = 'Pendiente';
             if (o.estatus === 'Cancelado') {
                 estadoPago = 'Cancelado';
-            } else if (costoCalculado > 0 && saldoPendienteCalculado === 0) {
-                estadoPago = 'Liquidado';
+            } else if (costoCalculado === 0) {
+                estadoPago = 'Sin costo';
             } else if (esUrgente) {
                 estadoPago = 'Urgente';
+            } else if (costoCalculado > 0 && saldoPendienteCalculado === 0 && totalCobradoCalculado > 0) {
+                estadoPago = 'Liquidado';
             } else if (totalCobradoCalculado > 0 && saldoPendienteCalculado > 0) {
                 estadoPago = 'Parcial';
+            } else if (o.estatus === 'Confirmado') {
+                estadoPago = 'Confirmado';
+            } else {
+                estadoPago = 'Pendiente';
             }
 
             // Acumuladores de KPIs (evitar duplicar montos de grupo en múltiples visitas)
