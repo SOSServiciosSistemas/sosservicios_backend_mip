@@ -2,41 +2,9 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../database');
 
-// Inicialización de la tabla de pagos_servicios si no existe
-const initCobranzaDB = async () => {
-    try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS pagos_servicios (
-                id_pago SERIAL PRIMARY KEY,
-                id_orden INT NOT NULL REFERENCES ordenes_trabajo(id_orden) ON DELETE CASCADE,
-                id_cliente INT,
-                id_grupo VARCHAR(100),
-                monto NUMERIC(10,2) NOT NULL,
-                metodo_pago VARCHAR(50) NOT NULL,
-                referencia VARCHAR(150),
-                fecha_pago TIMESTAMP DEFAULT timezone('America/Mexico_City', now()),
-                id_usuario_registra INT,
-                notas TEXT,
-                created_at TIMESTAMP DEFAULT timezone('America/Mexico_City', now())
-            );
-            ALTER TABLE pagos_servicios ADD COLUMN IF NOT EXISTS id_grupo VARCHAR(100);
-            CREATE INDEX IF NOT EXISTS idx_pagos_orden ON pagos_servicios(id_orden);
-            CREATE INDEX IF NOT EXISTS idx_pagos_grupo ON pagos_servicios(id_grupo);
-            CREATE INDEX IF NOT EXISTS idx_pagos_fecha ON pagos_servicios(fecha_pago);
-            CREATE INDEX IF NOT EXISTS idx_pagos_cliente ON pagos_servicios(id_cliente);
-        `);
-    } catch (err) {
-        console.warn("Aviso al verificar tabla pagos_servicios:", err.message);
-    }
-};
-initCobranzaDB();
-
 // 1. OBTENER RESUMEN GENERAL DE COBRANZA Y PAGOS
 router.get('/cobranza/resumen', async (req, res) => {
     try {
-        // Asegurar que la tabla exista por si acaso
-        await initCobranzaDB();
-
         // Consultar todas las órdenes con datos de clientes, ubicaciones y técnicos
         const queryOrdenes = `
             SELECT o.id_orden, o.id_ubicacion, o.id_tecnico, o.fecha_programada,
