@@ -199,4 +199,45 @@ router.post('/admin/productos', async (req, res) => {
     } catch (error) { res.status(500).json({ exito: false, error: error.message }); }
 });
 
+router.put('/admin/productos/:id', async (req, res) => {
+    const id_producto = req.params.id;
+    const { clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico } = req.body;
+
+    if (categoria === 'Quimico') {
+        if (!tipo_quimico || String(tipo_quimico).trim() === '') {
+            return res.status(400).json({ exito: false, error: 'El Tipo de Químico es obligatorio.' });
+        }
+        if (!subcategoria || String(subcategoria).trim() === '') {
+            return res.status(400).json({ exito: false, error: 'La Subcategoría (Banda toxicológica) es obligatoria.' });
+        }
+    }
+
+    try {
+        const result = await pool.query(`
+            UPDATE productos_insumos 
+            SET clave_producto = $1, 
+                nombre_comercial = $2, 
+                categoria = $3, 
+                unidad_medida = $4, 
+                capacidad_presentacion = $5, 
+                stock_minimo = $6, 
+                subcategoria = $7, 
+                ingrediente_activo = $8, 
+                registro_sanitario = $9, 
+                tipo_quimico = $10
+            WHERE id_producto = $11
+            RETURNING *;
+        `, [clave_producto, nombre_comercial, categoria, unidad_medida, capacidad_presentacion, stock_minimo, subcategoria, ingrediente_activo, registro_sanitario, tipo_quimico || null, id_producto]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ exito: false, error: 'Producto no encontrado' });
+        }
+
+        res.json({ exito: true, producto: result.rows[0] });
+    } catch (error) { 
+        console.error("Error al actualizar producto:", error);
+        res.status(500).json({ exito: false, error: error.message }); 
+    }
+});
+
 module.exports = router;
