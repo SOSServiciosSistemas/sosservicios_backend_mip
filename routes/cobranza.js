@@ -37,7 +37,8 @@ router.get('/cobranza/resumen', async (req, res) => {
             SELECT o.id_orden, o.id_ubicacion, o.id_tecnico, o.fecha_programada,
                    o.tipo_servicio, o.subtipo_servicio, o.subtipo_monitoreo,
                    o.estatus, o.costo, o.costo_total_tratamiento, o.ingresos_cobrados,
-                   o.num_tratamiento, o.total_tratamientos, o.id_grupo, o.requiere_factura,
+                   o.num_tratamiento, o.total_tratamientos, o.id_grupo,
+                   COALESCE(cp.requiere_factura, false) AS requiere_factura,
                    c.id_cliente, c.nombre AS nombre_cliente, c.telefono, c.giro,
                    u.nombre_ubicacion, u.domicilio, u.colonia, u.ciudad,
                    tec.nombre_completo AS nombre_tecnico,
@@ -51,6 +52,7 @@ router.get('/cobranza/resumen', async (req, res) => {
             LEFT JOIN clientes c ON u.id_cliente = c.id_cliente
             LEFT JOIN usuarios tec ON o.id_tecnico = tec.id_usuario
             LEFT JOIN reportes_mip r ON o.id_orden = r.id_orden
+            LEFT JOIN control_pagos cp ON o.id_orden = cp.id_orden
             LEFT JOIN (
                 SELECT id_orden, 
                        SUM(monto) AS total_pagos,
