@@ -54,7 +54,16 @@ router.get('/bitacoras/tecnico/:id_tecnico', async (req, res) => {
 router.post('/bitacoras/abrir', async (req, res) => {
     const { id_tecnico, km_inicial, revision_vehiculo } = req.body;
     try {
-        // Candado: Verificar si tiene alguna bitácora de un día anterior aún sin cerrar
+        // Candado 1: Verificar que el usuario tenga rol Técnico
+        const resUser = await pool.query('SELECT rol FROM usuarios WHERE id_usuario = $1', [id_tecnico]);
+        if (resUser.rows.length === 0 || resUser.rows[0].rol !== 'Tecnico') {
+            return res.status(403).json({ 
+                exito: false, 
+                error: 'Acceso denegado: Solo los usuarios con rol Técnico pueden abrir una bitácora o planeador de ruta.' 
+            });
+        }
+
+        // Candado 2: Verificar si tiene alguna bitácora de un día anterior aún sin cerrar
         const resPendiente = await pool.query(`
             SELECT id_bitacora, fecha_jornada 
             FROM bitacoras_diarias 
