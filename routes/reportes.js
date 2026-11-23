@@ -166,9 +166,9 @@ router.post('/reportes', async (req, res) => {
         if (montoRealCobrado > 0) {
             try {
                 await client.query(`
-                    INSERT INTO pagos_servicios (id_orden, id_cliente, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
-                    VALUES ($1, (SELECT u.id_cliente FROM ordenes_trabajo o JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion WHERE o.id_orden = $1), $2, 'Efectivo con Técnico', 'Cobro al concluir servicio', timezone('America/Mexico_City', now()), $3, 'Cobrado en sitio por técnico')
-                `, [id_orden, montoRealCobrado, id_tecnico ? parseInt(id_tecnico) : null]);
+                    INSERT INTO pagos_servicios (id_orden, id_cliente, id_grupo, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
+                    VALUES ($1, (SELECT u.id_cliente FROM ordenes_trabajo o JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion WHERE o.id_orden = $1), $2, $3, 'Efectivo con Técnico', 'Cobro al concluir servicio', timezone('America/Mexico_City', now()), $4, 'Cobrado en sitio por técnico')
+                `, [id_orden, ordenActual.id_grupo || null, montoRealCobrado, id_tecnico ? parseInt(id_tecnico) : null]);
             } catch (errP) {
                 console.warn("Aviso al registrar en pagos_servicios:", errP.message);
             }

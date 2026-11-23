@@ -10,6 +10,7 @@ const initCobranzaDB = async () => {
                 id_pago SERIAL PRIMARY KEY,
                 id_orden INT NOT NULL REFERENCES ordenes_trabajo(id_orden) ON DELETE CASCADE,
                 id_cliente INT,
+                id_grupo VARCHAR(100),
                 monto NUMERIC(10,2) NOT NULL,
                 metodo_pago VARCHAR(50) NOT NULL,
                 referencia VARCHAR(150),
@@ -18,7 +19,11 @@ const initCobranzaDB = async () => {
                 notas TEXT,
                 created_at TIMESTAMP DEFAULT timezone('America/Mexico_City', now())
             );
+            ALTER TABLE pagos_servicios ADD COLUMN IF NOT EXISTS id_grupo VARCHAR(100);
             CREATE INDEX IF NOT EXISTS idx_pagos_orden ON pagos_servicios(id_orden);
+            CREATE INDEX IF NOT EXISTS idx_pagos_grupo ON pagos_servicios(id_grupo);
+            CREATE INDEX IF NOT EXISTS idx_pagos_fecha ON pagos_servicios(fecha_pago);
+            CREATE INDEX IF NOT EXISTS idx_pagos_cliente ON pagos_servicios(id_cliente);
         `);
     } catch (err) {
         console.warn("Aviso al verificar tabla pagos_servicios:", err.message);
@@ -38,7 +43,6 @@ router.get('/cobranza/resumen', async (req, res) => {
                    o.tipo_servicio, o.subtipo_servicio, o.subtipo_monitoreo,
                    o.estatus, o.costo, o.costo_total_tratamiento, o.ingresos_cobrados,
                    o.num_tratamiento, o.total_tratamientos, o.id_grupo,
-                   COALESCE(cp.costo_con_iva, 0) AS costo_con_iva,
                    COALESCE(cp.requiere_factura, false) AS requiere_factura,
                    c.id_cliente, c.nombre AS nombre_cliente, c.telefono, c.giro,
                    u.nombre_ubicacion, u.domicilio, u.colonia, u.ciudad,
@@ -86,9 +90,8 @@ router.get('/cobranza/resumen', async (req, res) => {
                 if (cTotal > gruposInfo[o.id_grupo].costoTotal) {
                     gruposInfo[o.id_grupo].costoTotal = cTotal;
                 }
-                const cOrden = parseFloat(o.costo || o.costo_con_iva || 0);
-                if (parseInt(o.num_tratamiento) === 1 && cOrden > gruposInfo[o.id_grupo].costoTotal) {
-                    gruposInfo[o.id_grupo].costoTotal = cOrden;
+                if (parseInt(o.num_tratamiento) === 1 && parseFloat(o.costo || 0) > gruposInfo[o.id_grupo].costoTotal) {
+                    gruposInfo[o.id_grupo].costoTotal = parseFloat(o.costo);
                 }
 
                 const pagadoEnOrden = Math.max(
@@ -114,11 +117,11 @@ router.get('/cobranza/resumen', async (req, res) => {
 
             if (esMulti && gruposInfo[o.id_grupo]) {
                 const g = gruposInfo[o.id_grupo];
-                costoCalculado = g.costoTotal || parseFloat(o.costo || o.costo_con_iva || o.costo_total_tratamiento || 0);
+                costoCalculado = g.costoTotal || parseFloat(o.costo || o.costo_total_tratamiento || 0);
                 totalCobradoCalculado = g.totalPagado;
                 saldoPendienteCalculado = Math.max(0, costoCalculado - totalCobradoCalculado);
             } else {
-                costoCalculado = parseFloat(o.costo || o.costo_con_iva || o.costo_total_tratamiento || 0);
+                costoCalculado = parseFloat(o.costo || o.costo_total_tratamiento || 0);
                 // Si el costo es 0 pero ingresos_cobrados tenía el valor asignado al agendar, usarlo como costo
                 if (costoCalculado === 0 && parseFloat(o.ingresos_cobrados || 0) > 0 && o.estatus !== 'Completado') {
                     costoCalculado = parseFloat(o.ingresos_cobrados);
@@ -136,7 +139,7 @@ router.get('/cobranza/resumen', async (req, res) => {
             // Definir estados
             // URGENTE: El servicio ya fue completado/concluido Y aún tiene saldo pendiente > 0
             const esUrgente = (o.estatus === 'Completado' && saldoPendienteCalculado > 0);
-            
+
             // PENDIENTE FUTURO: Servicio programado/confirmado con saldo pendiente
             const esPendienteCobro = (o.estatus === 'Pendiente' || o.estatus === 'Confirmado') && saldoPendienteCalculado > 0;
 
@@ -205,9 +208,9 @@ router.get('/cobranza/resumen', async (req, res) => {
 
         // 2. Consultar historial detallado de pagos individuales
         const queryPagos = `
-            SELECT p.id_pago, p.id_orden, p.monto, p.metodo_pago, p.referencia, p.fecha_pago, p.notas,
-                   c.nombre AS nombre_cliente, o.tipo_servicio, o.num_tratamiento, o.total_tratamientos,
-                   u.nombre_completo AS usuario_registra
+            SELECT p.id_pago, p.id_orden, p.id_grupo, p.monto, p.metodo_pago, p.referencia, p.fecha_pago, p.notas,
+                    c.nombre AS nombre_cliente, o.tipo_servicio, o.num_tratamiento, o.total_tratamientos,
+                    u.nombre_completo AS usuario_registra
             FROM pagos_servicios p
             JOIN ordenes_trabajo o ON p.id_orden = o.id_orden
             LEFT JOIN ubicaciones ub ON o.id_ubicacion = ub.id_ubicacion
@@ -282,11 +285,12 @@ router.post('/cobranza/registrar-pago', async (req, res) => {
 
         // 1. Insertar el pago en pagos_servicios
         await client.query(`
-            INSERT INTO pagos_servicios (id_orden, id_cliente, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO pagos_servicios (id_orden, id_cliente, id_grupo, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `, [
             id_orden,
             orden.id_cliente,
+            orden.id_grupo || null,
             numMonto,
             metodo_pago || 'Transferencia',
             referencia || '',
@@ -323,8 +327,7 @@ router.post('/cobranza/registrar-pago', async (req, res) => {
             const resPagosGrupo = await client.query(`
                 SELECT COALESCE(SUM(p.monto), 0) AS total_pagos
                 FROM pagos_servicios p
-                JOIN ordenes_trabajo o ON p.id_orden = o.id_orden
-                WHERE o.id_grupo = $1
+                WHERE p.id_grupo = $1 OR p.id_orden IN (SELECT id_orden FROM ordenes_trabajo WHERE id_grupo = $1)
             `, [idGrupo]);
 
             // Sumar ingresos_cobrados de órdenes completadas

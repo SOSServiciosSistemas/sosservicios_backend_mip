@@ -173,9 +173,9 @@ router.post('/monitoreo/reporte-control', async (req, res) => {
         if (monto > 0) {
             try {
                 await client.query(`
-                    INSERT INTO pagos_servicios (id_orden, id_cliente, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
-                    VALUES ($1, $2, $3, 'Efectivo con Técnico', 'Cobro al concluir monitoreo', timezone('America/Mexico_City', now()), $4, 'Cobrado en sitio por técnico')
-                `, [id_orden, orden.id_cliente, monto, id_tecnico ? parseInt(id_tecnico) : null]);
+                    INSERT INTO pagos_servicios (id_orden, id_cliente, id_grupo, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
+                    VALUES ($1, $2, $3, $4, 'Efectivo con Técnico', 'Cobro al concluir monitoreo', timezone('America/Mexico_City', now()), $5, 'Cobrado en sitio por técnico')
+                `, [id_orden, orden.id_cliente, orden.id_grupo || null, monto, id_tecnico ? parseInt(id_tecnico) : null]);
             } catch (errP) {
                 console.warn("Aviso al registrar monitoreo en pagos_servicios:", errP.message);
             }
