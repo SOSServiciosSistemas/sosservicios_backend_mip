@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../database');
+const { autenticarToken, autorizarRoles } = require('../middleware/auth');
+
+// Blindaje: Solo usuarios autenticados con rol Admin o Administrador pueden acceder a este router
+router.use(autenticarToken, autorizarRoles('Admin', 'Administrador'));
 
 router.get('/admin/usuarios', async (req, res) => {
     try {
