@@ -162,6 +162,18 @@ router.post('/reportes', async (req, res) => {
             WHERE id_orden = $3
         `, [montoRealCobrado, id_tecnico ? parseInt(id_tecnico) : null, id_orden]);
 
+        // Registrar en pagos_servicios si hubo cobro en sitio
+        if (montoRealCobrado > 0) {
+            try {
+                await client.query(`
+                    INSERT INTO pagos_servicios (id_orden, id_cliente, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
+                    VALUES ($1, (SELECT u.id_cliente FROM ordenes_trabajo o JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion WHERE o.id_orden = $1), $2, 'Efectivo con Técnico', 'Cobro al concluir servicio', timezone('America/Mexico_City', now()), $3, 'Cobrado en sitio por técnico')
+                `, [id_orden, montoRealCobrado, id_tecnico ? parseInt(id_tecnico) : null]);
+            } catch (errP) {
+                console.warn("Aviso al registrar en pagos_servicios:", errP.message);
+            }
+        }
+
         // 4. Lógica de balance y cobranza para tratamientos multi-visita
         if (esMultiTratamiento) {
             const idGrupo = ordenActual.id_grupo;

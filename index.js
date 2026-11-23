@@ -21,6 +21,7 @@ app.use('/api', require('./routes/bitacoras'));
 app.use('/api', require('./routes/admin'));
 app.use('/api', require('./routes/inventario'));
 app.use('/api', require('./routes/monitoreo'));
+app.use('/api', require('./routes/cobranza'));
 
 // ====================================================================
 // INICIALIZACIÓN DEL SERVIDOR

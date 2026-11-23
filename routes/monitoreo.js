@@ -169,6 +169,18 @@ router.post('/monitoreo/reporte-control', async (req, res) => {
             WHERE id_orden = $2
         `, [monto, id_orden]);
 
+        // Registrar en pagos_servicios si hubo cobro
+        if (monto > 0) {
+            try {
+                await client.query(`
+                    INSERT INTO pagos_servicios (id_orden, id_cliente, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
+                    VALUES ($1, $2, $3, 'Efectivo con Técnico', 'Cobro al concluir monitoreo', timezone('America/Mexico_City', now()), $4, 'Cobrado en sitio por técnico')
+                `, [id_orden, orden.id_cliente, monto, id_tecnico ? parseInt(id_tecnico) : null]);
+            } catch (errP) {
+                console.warn("Aviso al registrar monitoreo en pagos_servicios:", errP.message);
+            }
+        }
+
         // Actualizar control_pagos si existe
         await client.query(`
             UPDATE control_pagos
@@ -269,6 +281,27 @@ router.get('/monitoreo/reporte-control/:id_orden', async (req, res) => {
     } catch (error) {
         console.error("Error al obtener reporte de control:", error);
         res.status(500).json({ exito: false, error: error.message });
+    }
+});
+
+// 5. Guardar firma del cliente directamente desde el visor del reporte
+router.post('/monitoreo/firmar', async (req, res) => {
+    const { id_orden, firma_cliente } = req.body;
+    if (!id_orden || !firma_cliente) {
+        return res.status(400).json({ exito: false, error: 'Faltan parámetros requeridos (id_orden o firma_cliente)' });
+    }
+    try {
+        const resRep = await pool.query('SELECT detalles_ejecucion FROM reportes_mip WHERE id_orden = $1', [id_orden]);
+        if (resRep.rows.length === 0) {
+            return res.status(404).json({ exito: false, error: 'Reporte no encontrado' });
+        }
+        const detalles = resRep.rows[0].detalles_ejecucion || {};
+        detalles.firma_cliente = firma_cliente;
+        await pool.query('UPDATE reportes_mip SET detalles_ejecucion = $1 WHERE id_orden = $2', [JSON.stringify(detalles), id_orden]);
+        res.json({ exito: true, mensaje: 'Firma guardada exitosamente' });
+    } catch (err) {
+        console.error("Error al guardar firma de monitoreo:", err);
+        res.status(500).json({ exito: false, error: err.message });
     }
 });
 
