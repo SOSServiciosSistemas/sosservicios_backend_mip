@@ -9,10 +9,10 @@ router.post('/inventario/entrada', async (req, res) => {
         await client.query('BEGIN');
         const resProd = await client.query(`SELECT capacidad_presentacion, costo_promedio FROM productos_insumos WHERE id_producto = $1`, [id_producto]);
         if (resProd.rows.length === 0) throw new Error('Producto no encontrado');
-        
+
         const capacidad = parseFloat(resProd.rows[0].capacidad_presentacion) || 1;
         const costoPromedioAnterior = parseFloat(resProd.rows[0].costo_promedio) || 0;
-        const cantidadReal = parseFloat(cantidad_comprada) * capacidad; 
+        const cantidadReal = parseFloat(cantidad_comprada) * capacidad;
         const costoTotal = parseFloat(cantidad_comprada) * parseFloat(costo_unitario);
 
         let resAlmacen = await client.query(`SELECT id_almacen FROM almacenes WHERE tipo_almacen = 'General' LIMIT 1`);
@@ -68,7 +68,7 @@ router.post('/inventario/traspaso', async (req, res) => {
 
         const resStockOficina = await client.query(`SELECT cantidad_disponible, fecha_caducidad FROM inventario_actual WHERE id_producto = $1 AND id_almacen = $2`, [id_producto, id_almacen_general]);
         if (resStockOficina.rows.length === 0 || parseFloat(resStockOficina.rows[0].cantidad_disponible) < parseFloat(cantidad_entregada_base)) throw new Error('Stock insuficiente');
-        
+
         await client.query(`UPDATE inventario_actual SET cantidad_disponible = cantidad_disponible - $1, ultima_actualizacion = CURRENT_TIMESTAMP WHERE id_producto = $2 AND id_almacen = $3`, [cantidad_entregada_base, id_producto, id_almacen_general]);
 
         const resStockTecnico = await client.query(`SELECT cantidad_disponible FROM inventario_actual WHERE id_producto = $1 AND id_almacen = $2`, [id_producto, id_almacen_tecnico]);
@@ -76,7 +76,7 @@ router.post('/inventario/traspaso', async (req, res) => {
         else await client.query(`INSERT INTO inventario_actual (id_producto, id_almacen, cantidad_disponible, fecha_caducidad) VALUES ($1, $2, $3, $4)`, [id_producto, id_almacen_tecnico, cantidad_entregada_base, resStockOficina.rows[0].fecha_caducidad]);
 
         await client.query(`INSERT INTO movimientos_inventario (id_producto, id_almacen_origen, id_almacen_destino, id_usuario_registra, tipo_movimiento, cantidad, notas) VALUES ($1, $2, $3, $4, 'Traspaso a Técnico', $5, $6)`, [id_producto, id_almacen_general, id_almacen_tecnico, id_usuario_registra || null, cantidad_entregada_base, notas]);
-        
+
         await client.query('COMMIT'); res.json({ exito: true });
     } catch (error) { await client.query('ROLLBACK'); res.status(500).json({ exito: false, error: error.message }); } finally { client.release(); }
 });
