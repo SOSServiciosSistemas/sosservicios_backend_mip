@@ -3,6 +3,9 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../database');
 
+// Asegurar tamaño suficiente para cambio_material (para soportar decimales como '2.5', '1.3', etc.)
+pool.query('ALTER TABLE monitoreo_lecturas ALTER COLUMN cambio_material TYPE VARCHAR(20);').catch(() => {});
+
 // 1. Obtener el inventario de dispositivos registrados de una ubicación
 router.get('/dispositivos/ubicacion/:id_ubicacion', async (req, res) => {
     try {
@@ -150,7 +153,7 @@ router.post('/monitoreo/reporte-control', async (req, res) => {
                             numDisp,
                             disp.tipo_material || '',
                             parseFloat(disp.consumo_cebo) || 0,
-                            disp.cambio_material || 'N',
+                            (disp.cambio_material !== undefined && disp.cambio_material !== null) ? String(disp.cambio_material).substring(0, 20) : 'N',
                             disp.tipo_plaga || '',
                             parseInt(disp.captura) || 0,
                             disp.observaciones || ''
