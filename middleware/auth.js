@@ -16,7 +16,7 @@ const autenticarToken = (req, res, next) => {
 
     jwt.verify(token, JWT_SECRET, (err, usuarioDecodificado) => {
         if (err) {
-            return res.status(403).json({ 
+            return res.status(401).json({ 
                 exito: false, 
                 error: 'Token inválido o expirado. Por favor, inicia sesión nuevamente.' 
             });

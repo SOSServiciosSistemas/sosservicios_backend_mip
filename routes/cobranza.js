@@ -4,7 +4,7 @@ const pool = require('../database');
 const { autenticarToken, autorizarRoles } = require('../middleware/auth');
 
 // Blindaje: Solo roles autorizados pueden consultar cobranza y registrar pagos
-router.use(autenticarToken, autorizarRoles('Admin', 'Administrador', 'Mesa_Control', 'Direccion'));
+router.use('/cobranza', autenticarToken, autorizarRoles('Admin', 'Administrador', 'Mesa_Control', 'Direccion'));
 
 // 1. OBTENER RESUMEN GENERAL DE COBRANZA Y PAGOS
 router.get('/cobranza/resumen', async (req, res) => {
