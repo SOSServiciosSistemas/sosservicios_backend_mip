@@ -63,6 +63,8 @@ router.post('/monitoreo/reporte-control', async (req, res) => {
         id_tecnico,
         monto_cobrado,
         requiere_factura,
+        tipo_pago,
+        metodo_pago,
         detalles
     } = req.body;
 
@@ -89,8 +91,13 @@ router.post('/monitoreo/reporte-control', async (req, res) => {
             if (resFirma.rows.length > 0) firmaTecnico = resFirma.rows[0].firma_digital;
         }
 
+        const metodoPagoFinal = metodo_pago || tipo_pago || (detalles && (detalles.metodo_pago || detalles.tipo_pago)) || 'Efectivo';
+
         const detallesCompletos = {
             ...detalles,
+            tipo_pago: metodoPagoFinal,
+            metodo_pago: metodoPagoFinal,
+            monto_cobrado: parseFloat(monto_cobrado) || 0,
             firma_tecnico: firmaTecnico
         };
 
@@ -174,8 +181,8 @@ router.post('/monitoreo/reporte-control', async (req, res) => {
             try {
                 await client.query(`
                     INSERT INTO pagos_servicios (id_orden, id_cliente, id_grupo, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
-                    VALUES ($1, $2, $3, $4, 'Efectivo con Técnico', 'Cobro al concluir monitoreo', timezone('America/Mexico_City', now()), $5, 'Cobrado en sitio por técnico')
-                `, [id_orden, orden.id_cliente, orden.id_grupo || null, monto, id_tecnico ? parseInt(id_tecnico) : null]);
+                    VALUES ($1, $2, $3, $4, $5, 'Cobro al concluir monitoreo', timezone('America/Mexico_City', now()), $6, 'Cobrado en sitio por técnico')
+                `, [id_orden, orden.id_cliente, orden.id_grupo || null, monto, metodoPagoFinal, id_tecnico ? parseInt(id_tecnico) : null]);
             } catch (errP) {
                 console.warn("Aviso al registrar monitoreo en pagos_servicios:", errP.message);
             }
