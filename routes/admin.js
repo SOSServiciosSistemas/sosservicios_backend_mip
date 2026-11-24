@@ -3,8 +3,24 @@ const router = express.Router();
 const pool = require('../database');
 const { autenticarToken, autorizarRoles } = require('../middleware/auth');
 
-// Blindaje: Solo usuarios autenticados con rol Admin o Administrador pueden acceder a rutas de administración
-router.use('/admin', autenticarToken, autorizarRoles('Admin', 'Administrador'));
+// 1. Blindaje base: Todas las rutas de administración requieren un token de sesión válido
+router.use('/admin', autenticarToken);
+
+// 2. Catálogo de productos (Lectura): Permitido para roles operativos (Mesa de Control, Técnicos, Admin, Dirección)
+// para registrar entradas de compras, consultar fichas técnicas y dosificaciones
+router.get('/admin/productos', autorizarRoles('Admin', 'Administrador', 'Mesa_Control', 'Direccion', 'Tecnico'), async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM productos_insumos ORDER BY nombre_comercial ASC;`);
+        res.json({ exito: true, productos: result.rows });
+    } catch (error) { 
+        console.error("Error al obtener catálogo de productos:", error);
+        res.status(500).json({ exito: false, error: 'Error al obtener catálogo de productos' }); 
+    }
+});
+
+// 3. El resto de acciones administrativas (Gestión de usuarios, Creación/Edición de productos, Estatus)
+// quedan estrictamente reservadas para Administradores
+router.use('/admin', autorizarRoles('Admin', 'Administrador'));
 
 router.get('/admin/usuarios', async (req, res) => {
     try {
@@ -172,13 +188,6 @@ router.put('/admin/productos/:id/estatus', async (req, res) => {
     try {
         await pool.query(`UPDATE productos_insumos SET activo = $1 WHERE id_producto = $2;`, [req.body.activo, req.params.id]);
         res.json({ exito: true });
-    } catch (error) { res.status(500).json({ exito: false }); }
-});
-
-router.get('/admin/productos', async (req, res) => {
-    try {
-        const result = await pool.query(`SELECT * FROM productos_insumos ORDER BY nombre_comercial ASC;`);
-        res.json({ exito: true, productos: result.rows });
     } catch (error) { res.status(500).json({ exito: false }); }
 });
 
