@@ -177,6 +177,16 @@ router.put('/admin/usuarios/:id/firma', async (req, res) => {
     }
 });
 
+router.get('/admin/clientes', async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT id_cliente, nombre, clase, activo FROM clientes ORDER BY nombre ASC;`);
+        res.json({ exito: true, clientes: result.rows });
+    } catch (error) { 
+        console.error("Error al obtener clientes para admin:", error);
+        res.status(500).json({ exito: false, error: 'Error al consultar clientes' }); 
+    }
+});
+
 router.put('/admin/clientes/:id/estatus', async (req, res) => {
     try {
         await pool.query(`UPDATE clientes SET activo = $1 WHERE id_cliente = $2;`, [req.body.activo, req.params.id]);
