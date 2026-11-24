@@ -3,9 +3,6 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../database');
 
-// Asegurar tamaño suficiente para cambio_material (para soportar decimales como '2.5', '1.3', etc.)
-pool.query('ALTER TABLE monitoreo_lecturas ALTER COLUMN cambio_material TYPE VARCHAR(20);').catch(() => {});
-
 // 1. Obtener el inventario de dispositivos registrados de una ubicación
 router.get('/dispositivos/ubicacion/:id_ubicacion', async (req, res) => {
     try {
