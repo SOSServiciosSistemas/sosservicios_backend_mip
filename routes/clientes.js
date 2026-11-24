@@ -87,4 +87,28 @@ router.get('/ubicaciones/:id_cliente', async (req, res) => {
     }
 });
 
+router.put('/ubicaciones/:id', async (req, res) => {
+    const { nombre_ubicacion, domicilio, colonia, ciudad } = req.body;
+    try {
+        const result = await pool.query(`
+            UPDATE ubicaciones 
+            SET nombre_ubicacion = $1, 
+                domicilio = $2, 
+                colonia = $3, 
+                ciudad = $4
+            WHERE id_ubicacion = $5
+            RETURNING *;
+        `, [nombre_ubicacion, domicilio, colonia, ciudad, req.params.id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ exito: false, error: 'Ubicación no encontrada' });
+        }
+
+        res.json({ exito: true, mensaje: 'Ubicación actualizada exitosamente', ubicacion: result.rows[0] });
+    } catch (error) {
+        console.error("Error al actualizar ubicación:", error);
+        res.status(500).json({ exito: false, error: 'Error al actualizar ubicación en base de datos' });
+    }
+});
+
 module.exports = router;
