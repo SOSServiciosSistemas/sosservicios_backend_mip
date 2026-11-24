@@ -39,7 +39,7 @@ router.post('/inventario/entrada', async (req, res) => {
 
 router.get('/inventario/general', async (req, res) => {
     try {
-        const { rows } = await pool.query(`SELECT p.clave_producto, p.nombre_comercial, p.tipo_quimico, p.unidad_medida, p.capacidad_presentacion, i.cantidad_disponible, p.costo_promedio, i.fecha_caducidad FROM inventario_actual i JOIN productos_insumos p ON i.id_producto = p.id_producto JOIN almacenes a ON i.id_almacen = a.id_almacen WHERE a.tipo_almacen = 'General' ORDER BY p.nombre_comercial ASC;`);
+        const { rows } = await pool.query(`SELECT p.clave_producto, p.nombre_comercial, p.ingrediente_activo, p.tipo_quimico, p.unidad_medida, p.capacidad_presentacion, i.cantidad_disponible, p.costo_promedio, i.fecha_caducidad FROM inventario_actual i JOIN productos_insumos p ON i.id_producto = p.id_producto JOIN almacenes a ON i.id_almacen = a.id_almacen WHERE a.tipo_almacen = 'General' ORDER BY p.nombre_comercial ASC;`);
         res.json({ exito: true, inventario: rows });
     } catch (error) { res.status(500).json({ exito: false }); }
 });
@@ -90,7 +90,7 @@ router.get('/inventario/historial', async (req, res) => {
             parametros = [fechaInicio + " 00:00:00", fechaFin + " 23:59:59"];
         }
         const { rows } = await pool.query(`
-            SELECT m.id_movimiento, m.fecha_movimiento, m.tipo_movimiento, m.cantidad, m.notas, p.nombre_comercial, p.unidad_medida, COALESCE(ao.nombre, 'Proveedor Externo') AS origen, COALESCE(ad.nombre, 'Baja / Consumo') AS destino, COALESCE(u.nombre_completo, 'Sistema') AS usuario_registra
+            SELECT m.id_movimiento, m.fecha_movimiento, m.tipo_movimiento, m.cantidad, m.notas, p.nombre_comercial, p.ingrediente_activo, p.clave_producto, p.unidad_medida, COALESCE(ao.nombre, 'Proveedor Externo') AS origen, COALESCE(ad.nombre, 'Baja / Consumo') AS destino, COALESCE(u.nombre_completo, 'Sistema') AS usuario_registra
             FROM movimientos_inventario m JOIN productos_insumos p ON m.id_producto = p.id_producto LEFT JOIN almacenes ao ON m.id_almacen_origen = ao.id_almacen LEFT JOIN almacenes ad ON m.id_almacen_destino = ad.id_almacen LEFT JOIN usuarios u ON m.id_usuario_registra = u.id_usuario
             ${condicionFechas} ORDER BY m.fecha_movimiento DESC ${parametros.length === 0 ? "LIMIT 200" : ""}
         `, parametros);
