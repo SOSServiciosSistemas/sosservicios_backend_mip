@@ -5,7 +5,7 @@ const pool = require('../database');
 router.get('/agenda-general', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT o.id_orden, o.fecha_programada, o.estatus, c.nombre AS nombre_cliente
+            SELECT o.id_orden, o.fecha_programada, o.estatus, o.tipo_servicio, o.subtipo_monitoreo, o.subtipo_servicio, c.nombre AS nombre_cliente
             FROM ordenes_trabajo o
             JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion
             JOIN clientes c ON u.id_cliente = c.id_cliente
@@ -30,7 +30,12 @@ router.get('/agenda-general', async (req, res) => {
                 backgroundColor: color,
                 borderColor: color,
                 textColor: '#ffffff',
-                extendedProps: { estatus: orden.estatus }
+                extendedProps: { 
+                    estatus: orden.estatus,
+                    tipo_servicio: orden.tipo_servicio,
+                    subtipo_monitoreo: orden.subtipo_monitoreo,
+                    subtipo_servicio: orden.subtipo_servicio
+                }
             };
         });
         res.json(eventos);
