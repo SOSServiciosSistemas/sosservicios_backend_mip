@@ -113,7 +113,7 @@ router.get('/ordenes/:id/reporte-final', async (req, res) => {
 
 // 3. Registra el Reporte MIP, marca completada, registra cobranza y descuenta inventario
 router.post('/reportes', async (req, res) => {
-    const { id_orden, letra, hora_inicio, hora_fin, detalles, id_tecnico, monto_cobrado } = req.body;
+    const { id_orden, letra, hora_inicio, hora_fin, detalles, id_tecnico, monto_cobrado, tipo_pago, metodo_pago } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -131,9 +131,6 @@ router.post('/reportes', async (req, res) => {
                 detallesFinal.firma_inspector = resTecFirma.rows[0].firma_digital;
             }
         }
-
-        // Guardar reporte MIP
-        await client.query(`INSERT INTO reportes_mip (id_orden, letra_formato, hora_inicio, hora_fin, detalles_ejecucion, fecha_reporte) VALUES ($1, $2, $3, $4, $5, timezone('America/Mexico_City', now()))`, [id_orden, letra, horaInicioSegura, horaFinSegura, JSON.stringify(detallesFinal)]);
 
         // 2. Obtener datos de la orden actual
         const resOrden = await client.query(`
@@ -155,6 +152,14 @@ router.post('/reportes', async (req, res) => {
             ? Math.max(0, parseFloat(monto_cobrado) || 0)
             : (parseFloat(ordenActual.ingresos_cobrados) || 0);
 
+        const metodoPagoFinal = metodo_pago || tipo_pago || detallesFinal.metodo_pago || detallesFinal.tipo_pago || (montoRealCobrado > 0 ? 'Efectivo' : 'Sin Cobro / Pendiente');
+        detallesFinal.tipo_pago = metodoPagoFinal;
+        detallesFinal.metodo_pago = metodoPagoFinal;
+        detallesFinal.monto_cobrado = montoRealCobrado;
+
+        // Guardar reporte MIP
+        await client.query(`INSERT INTO reportes_mip (id_orden, letra_formato, hora_inicio, hora_fin, detalles_ejecucion, fecha_reporte) VALUES ($1, $2, $3, $4, $5, timezone('America/Mexico_City', now()))`, [id_orden, letra, horaInicioSegura, horaFinSegura, JSON.stringify(detallesFinal)]);
+
         // 3. Marcar completada la orden, vincular id_tecnico y registrar el monto cobrado real en esta visita
         await client.query(`
             UPDATE ordenes_trabajo 
@@ -167,8 +172,8 @@ router.post('/reportes', async (req, res) => {
             try {
                 await client.query(`
                     INSERT INTO pagos_servicios (id_orden, id_cliente, id_grupo, monto, metodo_pago, referencia, fecha_pago, id_usuario_registra, notas)
-                    VALUES ($1, (SELECT u.id_cliente FROM ordenes_trabajo o JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion WHERE o.id_orden = $1), $2, $3, 'Efectivo con Técnico', 'Cobro al concluir servicio', timezone('America/Mexico_City', now()), $4, 'Cobrado en sitio por técnico')
-                `, [id_orden, ordenActual.id_grupo || null, montoRealCobrado, id_tecnico ? parseInt(id_tecnico) : null]);
+                    VALUES ($1, (SELECT u.id_cliente FROM ordenes_trabajo o JOIN ubicaciones u ON o.id_ubicacion = u.id_ubicacion WHERE o.id_orden = $1), $2, $3, $4, 'Cobro al concluir servicio', timezone('America/Mexico_City', now()), $5, 'Cobrado en sitio por técnico')
+                `, [id_orden, ordenActual.id_grupo || null, montoRealCobrado, metodoPagoFinal, id_tecnico ? parseInt(id_tecnico) : null]);
             } catch (errP) {
                 console.warn("Aviso al registrar en pagos_servicios:", errP.message);
             }
